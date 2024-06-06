@@ -11,7 +11,7 @@ class PowerBI:
     client_secret: str
     tenant_id: str
     scope: list
-    access_token: str
+    access_token = None
     
 
     def __init__(self, client_id: str, client_secret: str, tenant_id: str, scope: list):
@@ -43,9 +43,13 @@ class PowerBI:
         )
 
         result = app.acquire_token_for_client(scopes=self.scope)
+        
 
         if 'access_token' in result: # type: ignore
             self.access_token = result['access_token'] # type: ignore
+            _log.message = "Authentication successful"
+            _log.status = "success"
+            _log.print_message()
         else:
             raise Exception("Authentication failed")
 
@@ -57,12 +61,8 @@ class PowerBI:
 
 
 
-class Workspace(PowerBI):
+class Workspace():
     workspace_id: str
-
-    # super
-    def __init__(self, workspace_id: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         
 
 
@@ -71,16 +71,17 @@ class Workspace(PowerBI):
 
 class Dataset(Workspace):
     dataset_id: str
+    powerbi: PowerBI
 
     # super
-    def __init__(self, dataset_id: str, workspace_id, client_id, client_secret, tenant_id, scope):
-        super().__init__(workspace_id=workspace_id, client_id=client_id, client_secret=client_secret, tenant_id=tenant_id, scope=scope)
-        self.dataset_id = dataset_id
+    def __init__(self, dataset_id: str, workspace_id: str, powerbi: PowerBI):
+        self.powerbi = powerbi
         self.workspace_id = workspace_id
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.tenant_id = tenant_id
-        self.scope = scope
+        self.dataset_id = dataset_id
+        
+        
+        
+
 
     
 
@@ -96,7 +97,7 @@ class Dataset(Workspace):
             df: pd.DataFrame - DataFrame of the refreshes
         """
 
-        if not self.user_is_authenticated():
+        if not self.powerbi.user_is_authenticated():
             raise Exception("User is not authenticated")
 
         url = f"https://api.powerbi.com/v1.0/myorg/groups/{self.workspace_id}/datasets/{self.dataset_id}/refreshes?$top={last_n}"
@@ -105,7 +106,7 @@ class Dataset(Workspace):
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.access_token}"
+            "Authorization": f"Bearer {self.powerbi.access_token}"
         }
 
         response = requests.get(url, headers=headers)
@@ -133,8 +134,9 @@ class Dataset(Workspace):
                 - Disabled
         """
 
-        if not self.user_is_authenticated():
-            raise Exception("User is not authenticated")
+        if not self.powerbi.user_is_authenticated():
+            log = Log("fail", "User is not authenticated")
+            log.print_message()
 
         url = f"https://api.powerbi.com/v1.0/myorg/groups/{self.workspace_id}/datasets/{self.dataset_id}/refreshes?$top=1"
 
@@ -142,7 +144,7 @@ class Dataset(Workspace):
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.access_token}"
+            "Authorization": f"Bearer {self.powerbi.access_token}"
         }
 
         response = requests.get(url, headers=headers)
@@ -168,7 +170,7 @@ class Dataset(Workspace):
             response: requests.Response - Response object
         """
 
-        if not self.user_is_authenticated():
+        if not self.powerbi.user_is_authenticated():
             raise Exception("User is not authenticated")
         
 
@@ -187,7 +189,7 @@ class Dataset(Workspace):
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.access_token}"
+            "Authorization": f"Bearer {self.powerbi.access_token}"
         }
 
 
