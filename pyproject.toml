@@ -12,6 +12,13 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+  "pandas",
+  "msal",
+  "pydantic",
+  "pyodbc",
+  "sqlalchemy"
+]
 
 [project.urls]
 Homepage = "https://github.com/optiret/flowbyte"
@@ -21,13 +28,3 @@ Issues = "https://github.com/optiret/flowbyte/issues"
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
-
-
-[project]
-dependencies = [
-  "pandas",
-  "msal",
-  "pydantic",
-  "pyodbc",
-  "sqlalchemy"
-]
