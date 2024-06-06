@@ -1,5 +1,5 @@
 [project]
-name = "jamal"
+name = "flowbyte"
 version = "0.1.0"
 authors = [
   { name="Kevork Keheian", email="jamal@optiret.com" },
@@ -14,8 +14,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/optiret/jamal"
-Issues = "https://github.com/optiret/jamal/issues"
+Homepage = "https://github.com/optiret/flowbyte"
+Issues = "https://github.com/optiret/flowbyte/issues"
 
 
 [build-system]
