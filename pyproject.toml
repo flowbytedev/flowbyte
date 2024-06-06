@@ -2,7 +2,7 @@
 name = "flowbyte"
 version = "0.1.0"
 authors = [
-  { name="Kevork Keheian", email="jamal@optiret.com" },
+  { name="Kevork Keheian", email="flowbyte@optiret.com" },
 ]
 description = "ETL tool for data processing"
 readme = "README.md"
@@ -21,3 +21,13 @@ Issues = "https://github.com/optiret/flowbyte/issues"
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+
+[project]
+dependencies = [
+  "pandas",
+  "msal",
+  "pydantic",
+  "pyodbc",
+  "sqlalchemy"
+]
