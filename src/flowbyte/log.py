@@ -8,9 +8,9 @@ class Log:
 
 
 
-    def __init__(self, status:str, message: str):
-        self.status = status
+    def __init__(self, message: str, status:str):
         self.message = message
+        self.status = status
 
     
 
