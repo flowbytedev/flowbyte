@@ -3,7 +3,7 @@ import pyodbc
 import sqlalchemy
 import urllib.parse
 import pandas as pd
-from log import *
+from .log import Log
 
 _log = Log("", "")
 
@@ -89,7 +89,6 @@ class SQL:
 
         df = pd.DataFrame()
 
-        
         try:
             cursor = self.connection.cursor() # type: ignore
             cursor.execute(query)
