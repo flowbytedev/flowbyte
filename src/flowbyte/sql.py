@@ -45,7 +45,7 @@ class SQL:
         except Exception as e:
             _log.message = "Error connecting to the database"
             _log.status = "fail"
-            _log.print_message()
+            _log.print_message(other_message=str(e))
 
             return None
 

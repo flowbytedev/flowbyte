@@ -31,9 +31,15 @@ class Log:
 
 
     
-    def print_message(self):
+    def print_message(self, other_message=None):
         """
         Print the message in the specified color
         """
         color = self.get_status_color(self.status)
         print(color + self.message + "\033[0m")
+        
+        if other_message:
+            # print the other message in the same color in a new line
+            print("--------------------------------------------------------------------------------")
+            print(color + other_message + "\033[0m")
+            print("--------------------------------------------------------------------------------")
