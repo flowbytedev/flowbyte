@@ -6,6 +6,7 @@ import urllib.parse
 import pandas as pd
 import numpy as np
 from .log import Log
+import sys
 
 _log = Log("", "")
 
@@ -14,6 +15,9 @@ class SQL:
     database: str
     username: str
     password: str
+
+
+class MSSQL (SQL):
     driver: str
     connection_type: str
     connection: None
@@ -29,7 +33,10 @@ class SQL:
 
 
     def connect(self):
-        
+
+        """
+        Connect to the database using the provided credentials
+        """
 
         try:
             if self.connection_type == "pyodbc":
@@ -77,22 +84,27 @@ class SQL:
             _log.print_message()
 
 
-    def get_data(self, query, chunksize=1000, progress_callback=None, *args, **kwargs):
+    def get_data(self, query, chunksize=1000, category_columns=None, bool_columns=None, float_columns=None, round_columns=None, progress_callback=None, *args, **kwargs):
         """
-        Get data from the database
-        
+        Get data from the database in chunks, converting specified columns to the category dtype.
+
         Args:
             query: str - SQL query to be executed
+            chunksize: int - Number of rows per chunk
+            category_columns: list - List of column names to be converted to category dtype
+            progress_callback: function - Function to call to report progress
+            *args, **kwargs - Additional arguments to pass to the progress_callback function
 
         Returns:
-            data: list - list of tuples containing the data
-        
+            df: DataFrame - The concatenated DataFrame containing the data
         """
 
-        df = pd.DataFrame()
+        chunks = []
+
+        print(round_columns)
 
         try:
-            cursor = self.connection.cursor() # type: ignore
+            cursor = self.connection.cursor()  # type: ignore
             cursor.execute(query)
 
             total_records = 0
@@ -101,38 +113,68 @@ class SQL:
                 rows = cursor.fetchmany(chunksize)
                 if not rows:
                     break
-                
+
+
                 chunk_df = pd.DataFrame.from_records(rows, columns=[desc[0] for desc in cursor.description])
-                
-                total_records += len(chunk_df)
 
-                # print the progress if progress_callback is provided
-                if progress_callback:
-                    progress_callback(total_records, *args, **kwargs)
+                if category_columns or bool_columns or round_columns or float_columns:
+
+                    if category_columns:
+                        for col in category_columns:
+                            if col in chunk_df.columns:
+                                chunk_df[col] = chunk_df[col].astype('category')
                     
+                    if bool_columns:
+                        for col in bool_columns:
+                            if col in chunk_df.columns:
+                                chunk_df[col] = chunk_df[col].astype('bool')
 
-                df = pd.concat([df, chunk_df])
+                    if float_columns:
+                        for col in float_columns:
+                            if col in chunk_df.columns:
+                                chunk_df[col] = chunk_df[col].astype('float')
 
-                # clear the chunk_df
-                del chunk_df
+                    if round_columns:
+                        print("rounding columns")
+                        print()
+                        chunk_df = chunk_df.round(round_columns)
 
-            # close the sql connection
+
+                chunks.append(chunk_df)
+
+
+                # Print the progress if progress_callback is provided
+                if progress_callback:
+
+                    total_records += len(chunk_df)
+                    memory_used = np.sum([chunk.memory_usage().sum() for chunk in chunks]) / 1024 ** 2
+                    message = f"Records {total_records}  | Memory Used: {memory_used} MB"
+                    
+                    # delete the last line from cmd
+                    sys.stdout.flush()
+    
+                    # Move the cursor up one line and clear the line
+                    sys.stdout.write('\033[F')  # Cursor up one line
+                    sys.stdout.write('\033[K')  # Clear to the end of the line
+
+                     
+                    progress_callback(message, *args, **kwargs)
+
+
+            # Close the SQL connection
             self.disconnect()
-                
+
+            # Concatenate all chunks into a single DataFrame
+            df = pd.concat(chunks, ignore_index=True)
 
             return df
-        
-
-
 
         except Exception as e:
-            # print(e)
+            # Print the error message
             _log.message = "Error executing the query"
             _log.status = "fail"
-            _log.print_message()
-            
+            _log.print_message(other_message=str(e))
             return None
-        
 
 
     def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000):
