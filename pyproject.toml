@@ -1,6 +1,6 @@
 [project]
 name = "flowbyte"
-version = "0.2.6"
+version = "0.2.7"
 authors = [
   { name="Kevork Keheian", email="flowbyte@optiret.com" },
 ]
@@ -18,7 +18,8 @@ dependencies = [
   "pydantic",
   "pyodbc",
   "sqlalchemy",
-  "numpy"
+  "numpy",
+  "pyarrow"
 ]
 
 [project.urls]
