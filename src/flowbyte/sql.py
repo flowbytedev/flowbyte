@@ -2,6 +2,7 @@ from pydantic import BaseModel
 import pyodbc
 import sqlalchemy
 from sqlalchemy import and_, Table, MetaData
+import pyarrow as pa
 import urllib.parse
 import pandas as pd
 import numpy as np
@@ -84,7 +85,7 @@ class MSSQL (SQL):
             _log.print_message()
 
 
-    def get_data(self, query, chunksize=1000, category_columns=None, bool_columns=None, float_columns=None, round_columns=None, progress_callback=None, *args, **kwargs):
+    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, float_columns=None, round_columns=None, progress_callback=None, *args, **kwargs):
         """
         Get data from the database in chunks, converting specified columns to the category dtype.
 
@@ -100,8 +101,8 @@ class MSSQL (SQL):
         """
 
         chunks = []
-
-        print(round_columns)
+        desired_precision = 38
+        desired_scale = 20
 
         try:
             cursor = self.connection.cursor()  # type: ignore
@@ -114,59 +115,52 @@ class MSSQL (SQL):
                 if not rows:
                     break
 
+                # Create a pyarrow Table from the fetched rows
+                chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
 
-                chunk_df = pd.DataFrame.from_records(rows, columns=[desc[0] for desc in cursor.description])
+                # Convert columns based on specified data types
+                for col, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
+                    if dtype:
+                        for column in dtype:
+                            if column in chunk_df.column_names:
+                                chunk_df = chunk_df.set_column(
+                                    chunk_df.schema.get_field_index(column),
+                                    column,
+                                    chunk_df.column(column).cast(pa.type_for_alias(col))
+                                )
 
-                if category_columns or bool_columns or round_columns or float_columns:
-
-                    if category_columns:
-                        for col in category_columns:
-                            if col in chunk_df.columns:
-                                chunk_df[col] = chunk_df[col].astype('category')
-                    
-                    if bool_columns:
-                        for col in bool_columns:
-                            if col in chunk_df.columns:
-                                chunk_df[col] = chunk_df[col].astype('bool')
-
-                    if float_columns:
-                        for col in float_columns:
-                            if col in chunk_df.columns:
-                                chunk_df[col] = chunk_df[col].astype('float')
-
-                    if round_columns:
-                        print("rounding columns")
-                        print()
-                        chunk_df = chunk_df.round(round_columns)
-
+                # Cast decimal columns to desired precision and scale
+                for column in chunk_df.column_names:
+                    column_type = chunk_df.schema.field(column).type
+                    if pa.types.is_decimal(column_type):
+                        # Cast to the desired decimal type with precision 38 and scale 20
+                        chunk_df = chunk_df.set_column(
+                            chunk_df.schema.get_field_index(column),
+                            column,
+                            chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
+                        )
 
                 chunks.append(chunk_df)
 
-
                 # Print the progress if progress_callback is provided
                 if progress_callback:
-
-                    total_records += len(chunk_df)
-                    memory_used = np.sum([chunk.memory_usage().sum() for chunk in chunks]) / 1024 ** 2
+                    total_records += chunk_df.num_rows
+                    memory_used = sum(chunk.nbytes for chunk in chunks) / 1024 ** 2
                     message = f"Records {total_records}  | Memory Used: {memory_used} MB"
                     
-                    # delete the last line from cmd
-                    sys.stdout.flush()
-    
                     # Move the cursor up one line and clear the line
+                    sys.stdout.flush()
                     sys.stdout.write('\033[F')  # Cursor up one line
                     sys.stdout.write('\033[K')  # Clear to the end of the line
 
-                     
                     progress_callback(message, *args, **kwargs)
-
 
             # Close the SQL connection
             self.disconnect()
 
-            # Concatenate all chunks into a single DataFrame
-            df = pd.concat(chunks, ignore_index=True)
-
+            # Concatenate all chunks into a single Table
+            df = pa.concat_tables(chunks)
+            df = df.to_pandas()
             return df
 
         except Exception as e:
