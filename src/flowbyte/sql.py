@@ -288,4 +288,45 @@ class MSSQL (SQL):
 
         self.connection.execute(query)
 
-        self.connection.commit()
+    # truncate table
+    def truncate_table(self, schema_name, table_name):
+        """
+        Truncate a table in the database
+
+        Args:
+            schema_name: str - The name of the schema containing the table
+            table_name: str - The name of the table to truncate
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"TRUNCATE TABLE {schema_name}.{table_name}")
+        self.connection.commit() # type: ignore
+
+
+    
+    # delete data from table
+    def delete_data(self, schema_name, table_name):
+        """
+        Delete data from a table in the database
+
+        Args:
+            schema_name: str - The name of the schema containing the table
+            table_name: str - The name of the table to delete data from
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"DELETE FROM {schema_name}.{table_name}")
+        self.connection.commit() # type: ignore
+
+
+    # delete data with conditions
+    def delete_data_with_conditions(self, schema_name, table_name, conditions):
+        """
+        Delete data from a table in the database based on the provided conditions
+
+        Args:
+            schema_name: str - The name of the schema containing the table
+            table_name: str - The name of the table to delete data from
+            conditions: str - The conditions to use for deleting data
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"DELETE FROM {schema_name}.{table_name} WHERE {conditions}")
+        self.connection.commit() # type: ignore
