@@ -23,8 +23,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/optiret/flowbyte"
-Issues = "https://github.com/optiret/flowbyte/issues"
+Homepage = "https://github.com/flowbytedev/flowbyte"
+Issues = "https://github.com/flowbytedev/flowbyte/issues"
 
 
 [build-system]
