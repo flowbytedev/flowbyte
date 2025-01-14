@@ -50,6 +50,7 @@ class ADLS:
 
         Returns:
             list: A list of file paths that match the specified filters and file suffix.
+            fs: The file system object used for directory and file operations.
 
         Notes:
             - The function matches directory names exactly with the specified filter values
@@ -61,10 +62,22 @@ class ADLS:
         fs = fs if fs is not None else self.initialize_azure_blob_file_system()
 
         def recursive_list(path, level_filters):
-            # Base case: If no filters or at the file level extract everything in the container
+            
+            # Base case: If no filters remain, descend into directories until files are found
             if not level_filters:
-                return [file for file in fs.ls(path) if file.endswith(file_name)]
+                matched_paths = []
+                for sub_path in fs.ls(path):
+                    if fs.isdir(sub_path):  # If it's a directory, continue exploring
+                        matched_paths.extend(recursive_list(sub_path, {}))
+                    elif sub_path.endswith(file_name):  # If it's a file, add it
+                        matched_paths.append(sub_path)
 
+                _log.message = f'MATCHED PATHS: {matched_paths}'
+                _log.status = 'info'
+                _log.print_message()
+
+                return matched_paths
+            
             # Process directories with filters
             if isinstance(level_filters, dict):  # Ensure level_filters is a dictionary
                 next_filter_key, *remaining_filters = level_filters.items()
@@ -91,4 +104,4 @@ class ADLS:
 
         level_filters = filters if isinstance(filters, dict) else {}
         
-        return recursive_list(self.container_name, level_filters)
+        return recursive_list(self.container_name, level_filters), fs
