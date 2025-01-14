@@ -50,6 +50,7 @@ class ADLS:
 
         Returns:
             list: A list of file paths that match the specified filters and file suffix.
+            fs: The file system object used for directory and file operations.
 
         Notes:
             - The function matches directory names exactly with the specified filter values
@@ -103,4 +104,4 @@ class ADLS:
 
         level_filters = filters if isinstance(filters, dict) else {}
         
-        return recursive_list(self.container_name, level_filters)
+        return recursive_list(self.container_name, level_filters), fs
