@@ -119,15 +119,23 @@ class MSSQL (SQL):
                 chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
 
                 # Convert columns based on specified data types
-                for col, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
-                    if dtype:
-                        for column in dtype:
+                for columns, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
+                    if columns:  
+                        for column in columns:
                             if column in chunk_df.column_names:
-                                chunk_df = chunk_df.set_column(
-                                    chunk_df.schema.get_field_index(column),
-                                    column,
-                                    chunk_df.column(column).cast(pa.type_for_alias(col))
-                                )
+                                if dtype == "category":
+                                    # Convert column to string first, then cast to dictionary
+                                    chunk_df = chunk_df.set_column(
+                                        chunk_df.schema.get_field_index(column),
+                                        column,
+                                        chunk_df.column(column).cast(pa.string()).dictionary_encode()
+                                    )
+                                else:
+                                    chunk_df = chunk_df.set_column(
+                                        chunk_df.schema.get_field_index(column),
+                                        column,
+                                        chunk_df.column(column).cast(pa.type_for_alias(dtype))  
+                                    )
 
                 # Cast decimal columns to desired precision and scale
                 for column in chunk_df.column_names:
@@ -159,9 +167,15 @@ class MSSQL (SQL):
             self.disconnect()
 
             # Concatenate all chunks into a single Table
-            df = pa.concat_tables(chunks)
-            df = df.to_pandas()
-            return df
+            if chunks:
+                df = pa.concat_tables(chunks).to_pandas()
+            else:
+                _log.message = "Query returned no data"
+                _log.status = "fail"
+                _log.print_message()
+                df = pd.DataFrame()
+
+            return df 
 
         except Exception as e:
             # Print the error message
