@@ -3,9 +3,11 @@ import pyodbc
 import sqlalchemy
 from sqlalchemy import and_, Table, MetaData
 import pyarrow as pa
+import pyarrow.compute as pc
 import urllib.parse
 import pandas as pd
 import numpy as np
+import dask.dataframe as dd
 from .log import Log
 import sys
 
@@ -50,6 +52,7 @@ class MSSQL (SQL):
             _log.status = "success"
             _log.print_message()
 
+
         except Exception as e:
             _log.message = "Error connecting to the database"
             _log.status = "fail"
@@ -85,22 +88,61 @@ class MSSQL (SQL):
             _log.print_message()
 
 
-    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, float_columns=None, round_columns=None, progress_callback=None, *args, **kwargs):
+
+    
+
+    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, 
+                 float_columns=None, integer_columns=None, decimal_columns=None, 
+                 object_columns=None, timestamp_columns=None, 
+                 progress_callback=None, *args, **kwargs):
         """
-        Get data from the database in chunks, converting specified columns to the category dtype.
+        Get data from the database in chunks, converting specified columns to the appropriate data types.
 
         Args:
             query: str - SQL query to be executed
             chunksize: int - Number of rows per chunk
             category_columns: list - List of column names to be converted to category dtype
+            bool_columns: list - List of column names to be converted to bool dtype
+            float_columns: list - List of column names to be converted to float dtype
+            integer_columns: list - List of column names to be converted to int dtype
+            decimal_columns: list - List of column names to be converted to decimal dtype
+            object_columns: list - List of column names to be converted to object (string) dtype
+            timestamp_columns: list - List of column names to be converted to timestamp dtype
             progress_callback: function - Function to call to report progress
+            object_columns = object_columns or []
+            timestamp_columns = timestamp_columns or []
             *args, **kwargs - Additional arguments to pass to the progress_callback function
 
         Returns:
-            df: DataFrame - The concatenated DataFrame containing the data
+            df: DataFrame - The concatenated DataFrame containing the data, or None if an error occurred.
+
+        Description:
+            This function executes the provided SQL query and retrieves the data in chunks. It then converts
+            specified columns to the appropriate data types (e.g., category, bool, float, integer, and decimal) 
+            based on the input parameters. The function also handles any necessary rounding for the specified 
+            columns and aligns all chunks to ensure that the column structure is consistent across all chunks.
+
+            The function also includes a progress callback that can be used to track the status of the data retrieval 
+            process. After fetching all the chunks, the function concatenates them into a single DataFrame and returns it.
+
+            In case of any errors (e.g., casting errors or SQL execution issues), the function returns `None` and logs 
+            an error message.
+
+        Note:
+        - It is important to define the column names for each type (category, bool, float, int, decimal, object, timestamp).
+        - If a column is not defined in the corresponding list, it may not be cast to the correct type, which could result in errors during processing.
+        - If columns contain NULL values or different types across chunks, it could lead to schema errors. 
+        - Ensure columns with NULL values are defined properly in their respective types to avoid errors.
         """
 
         chunks = []
+        total_records = 0
+        column_names = set()
+
+        # Ensure column lists are not None
+        category_columns = category_columns or []
+        bool_columns = bool_columns or []
+        float_columns = float_columns or []
         desired_precision = 38
         desired_scale = 20
 
@@ -118,8 +160,20 @@ class MSSQL (SQL):
                 # Create a pyarrow Table from the fetched rows
                 chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
 
+                # Collect column names
+                column_names.update(chunk_df.column_names)
+
+
                 # Convert columns based on specified data types
-                for columns, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
+                for columns, dtype in [(category_columns, 'category'), 
+                                       (bool_columns, 'bool'), 
+                                       (float_columns, 'float'),
+                                       (integer_columns, 'int64'),
+                                       (decimal_columns, 'decimal'),
+                                       (object_columns, 'object'),
+                                       (timestamp_columns, 'timestamp')
+
+                                       ]:
                     if columns:  
                         for column in columns:
                             if column in chunk_df.column_names:
@@ -129,6 +183,27 @@ class MSSQL (SQL):
                                         chunk_df.schema.get_field_index(column),
                                         column,
                                         chunk_df.column(column).cast(pa.string()).dictionary_encode()
+                                    )
+                                elif dtype == "decimal":
+                                    chunk_df = chunk_df.set_column(
+                                    chunk_df.schema.get_field_index(column),
+                                    column,
+                                    chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
+                                      )
+                                elif dtype == "timestamp":
+                                    # Convert to timestamp[us] (or another timestamp type like timestamp[s])
+                                    chunk_df = chunk_df.set_column(
+                                        chunk_df.schema.get_field_index(column),
+                                        column,
+                                        chunk_df.column(column).cast(pa.timestamp('us'))
+                                    )
+
+                                elif dtype == "object":
+                                    # Convert to string (object type is typically a string in pandas)
+                                    chunk_df = chunk_df.set_column(
+                                        chunk_df.schema.get_field_index(column),
+                                        column,
+                                        chunk_df.column(column).cast(pa.string())
                                     )
                                 else:
                                     chunk_df = chunk_df.set_column(
@@ -148,7 +223,9 @@ class MSSQL (SQL):
                             chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
                         )
 
+
                 chunks.append(chunk_df)
+            
 
                 # Print the progress if progress_callback is provided
                 if progress_callback:
@@ -182,6 +259,16 @@ class MSSQL (SQL):
             _log.message = "Error executing the query"
             _log.status = "fail"
             _log.print_message(other_message=str(e))
+
+            # Print additional note about column types
+            _log.message = "Note: It is important to define the expected column types explicitly (category, bool, float, int, decimal, object, timestamp)."
+            _log.status = "warning"
+            _log.print_message()
+            
+
+            _log.message = "If columns contain NULL values or different types across chunks, it could lead to schema errors. Ensure columns with NULL values are defined properly in their respective types to avoid errors."
+            _log.status = "warning"
+            _log.print_message()
             return None
 
 
