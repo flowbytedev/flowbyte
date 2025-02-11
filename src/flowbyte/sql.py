@@ -30,9 +30,20 @@ class MSSQL (SQL):
         self.password = password
         self.driver = driver
         self.connection_type = connection_type
-        self.connection = None
+    def check_database_exists(self):
+        
+        # cursor = self.connection.cursor()
 
+        query = f"SELECT db_id('{self.database}')"
+        
+        # cursor.execute(f"SELECT db_id('{self.database}')")
+        # exists = cursor.fetchone()[0] is not None
 
+        # check if the database exists without using the cursor
+        exists = self.connection.execute(query).fetchone()[0] is not None # type: ignore
+        
+
+        return exists
     def connect(self):
 
         """
