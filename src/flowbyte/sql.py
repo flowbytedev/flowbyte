@@ -171,7 +171,21 @@ class MSSQL (SQL):
             return None
 
 
-    def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000):
+    def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append"):
+        """
+        Insert records into a database table
+
+        Args:
+            schema: str - The schema name of the table
+            table_name: str - The name of the table to insert records into
+            insert_records: DataFrame - The records to insert, where each row is a record
+            chunksize: int - The number of rows to insert in each chunk
+            if_table_exists: str - The action to take if the table already exists. Options are 'fail', 'replace', 'append', 'truncate', 'drop'
+
+        Returns:
+            None
+        
+        """
         
         connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
         engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
@@ -181,7 +195,7 @@ class MSSQL (SQL):
         # with engine.connect() as conn:
         for i in range(0, total, chunksize):
             # print the values as details
-            insert_records.iloc[i:i+chunksize].to_sql(table_name, engine, if_exists="append", index=False, chunksize=chunksize, schema=schema) # type: ignore
+            insert_records.iloc[i:i+chunksize].to_sql(table_name, engine, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema) # type: ignore
             if(i + chunksize > total):
                 print(f"Inserted {total} rows out of {total} rows")
             else:
