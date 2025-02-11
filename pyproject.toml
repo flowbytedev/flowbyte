@@ -21,7 +21,7 @@ dependencies = [
   "numpy",
   "pyarrow",
   "logfire",
-  "logfire[sqlalchemy]"
+  "logfire[sqlalchemy]",
   "ipython",
   "adlfs"
 ]
