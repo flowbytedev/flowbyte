@@ -19,7 +19,9 @@ dependencies = [
   "pyodbc",
   "sqlalchemy",
   "numpy",
-  "pyarrow"
+  "pyarrow",
+  "ipython",
+  "adlfs"
 ]
 
 [project.urls]
