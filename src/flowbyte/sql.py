@@ -1,36 +1,67 @@
+from .log import Log
+from pydantic import BaseModel
 import pyodbc
 import sqlalchemy
-from sqlalchemy import and_, Table, MetaData
+from sqlalchemy import and_, Table, MetaData, text
 import pyarrow as pa
 import urllib.parse
 import pandas as pd
+import numpy as np
 from .log import Log
 import sys
+from datetime import datetime
+import logfire
 
 _log = Log("", "")
 
 class SQL:
     host: str
+    # optional
     database: str
     username: str
     password: str
+    logfire_token: str = None
+    
 
 
 class MSSQL (SQL):
     driver: str
     connection_type: str
-    connection: None
+    connection = None
 
-    def __init__(self, connection_type, host, database, username, password, driver):
+    def __init__(self, connection_type, host, database, username, password, driver, logfire_token=None):
         self.host = host
         self.database = database
         self.username = username
         self.password = password
         self.driver = driver
         self.connection_type = connection_type
-        self.connection = None
+        self.connection = None # type: ignore
+        self.logfire_token = logfire_token
+
+        if self.logfire_token:
+            logfire.configure(token=self.logfire_token, environment="flowbyte", service_name="mssql")
+
+            if self.connection_type == "sqlalchemy":
+                logfire.instrument_sqlalchemy(engine=self.connection)
 
 
+    def check_database_exists(self):
+        
+        # cursor = self.connection.cursor()
+
+        query = f"SELECT db_id('{self.database}')"
+        
+        # cursor.execute(f"SELECT db_id('{self.database}')")
+        # exists = cursor.fetchone()[0] is not None
+
+        # check if the database exists without using the cursor
+        exists = self.connection.execute(query).fetchone()[0] is not None # type: ignore
+        
+
+        return exists
+    
+    @logfire.instrument(msg_template='sql.connect')
     def connect(self):
 
         """
@@ -84,12 +115,134 @@ class MSSQL (SQL):
             _log.print_message()
 
 
+    def create_database(self):
+        """
+        Create a new database
+        """
+        self.connection.cursor.execute(f"CREATE DATABASE {self.database}") # type: ignore
+        self.connection.commit() # type: ignore
+
+
+
+    def schema_exists(self, schema_name):
+        """
+        Check if a schema exists in the database
+
+        Args:
+            schema_name: str - The name of the schema to check
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"SELECT schema_id FROM sys.schemas WHERE name = '{schema_name}'")
+
+        if cursor.fetchone():
+            return True
+        
+        return False
     
 
+    def create_schema(self, schema_name):
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"""
+            CREATE SCHEMA {schema_name}
+        """)
+
+
+    def table_exists(self, schema_name, table_name):
+        """
+        Check if a table exists in the database
+
+        Args:
+            schema_name: str - The name of the schema to check
+            table_name: str - The name of the table to check
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema_name}' AND TABLE_NAME = '{table_name}'")
+
+        if cursor.fetchone():
+            return True
+        
+        return False
+
+    
+    @logfire.instrument(msg_template='sql.get_data.convert_pyarrow_columns')
+    def convert_pyarrow_columns(self, chunk_df, category_columns=None, bool_columns=None, float_columns=None, integer_columns = None, object_columns=None, timestamp_columns=None):
+        """
+        Convert columns in a DataFrame to the specified data types using PyArrow
+
+        Args:
+            df: DataFrame - The DataFrame to convert
+            category_columns: list - List of column names to be converted to category dtype
+            bool_columns: list - List of column names to be converted to bool dtype
+            float_columns: list - List of column names to be converted to float dtype
+
+        Returns:
+            df: DataFrame - The DataFrame with the columns converted
+        """
+
+        desired_precision = 38
+        desired_scale = 20
+
+        # Convert columns based on specified data types
+        for columns, dtype in [(category_columns, 'category'), 
+                                (bool_columns, 'bool'), 
+                                (float_columns, 'float64'),
+                                (integer_columns, 'int64'),
+                                (object_columns, 'object'),
+                                (timestamp_columns, 'timestamp')
+
+                                ]:
+            if columns:  
+                for column in columns:
+                    if column in chunk_df.column_names:
+                        if dtype == "category":
+                            # Convert column to string first, then cast to dictionary
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.string()).dictionary_encode()
+                            )
+                        elif dtype == "timestamp":
+                            # Convert to timestamp[us] (or another timestamp type like timestamp[s])
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.timestamp('us'))
+                            )
+
+                        elif dtype == "object":
+                            # Convert to string (object type is typically a string in pandas)
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.string())
+                            )
+                        else:
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.type_for_alias(dtype))  
+                            )
+
+        # Cast decimal columns to desired precision and scale
+        for column in chunk_df.column_names:
+            column_type = chunk_df.schema.field(column).type
+            if pa.types.is_decimal(column_type):
+                # Cast to the desired decimal type with precision 38 and scale 20
+                chunk_df = chunk_df.set_column(
+                    chunk_df.schema.get_field_index(column),
+                    column,
+                    chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
+                )
+
+
+        return chunk_df
+
+
+    @logfire.instrument(msg_template='sql.get_data')
     def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, 
                  float_columns=None, integer_columns=None, 
                  object_columns=None, timestamp_columns=None, 
-                 progress_callback=None, *args, **kwargs):
+                 progress_callback=None, *args, **kwargs): # type: ignore
         """
         Get data from the database in chunks, converting specified columns to the appropriate data types.
 
@@ -133,75 +286,52 @@ class MSSQL (SQL):
 
 
 
+
         try:
-            cursor = self.connection.cursor()  # type: ignore
-            cursor.execute(query)
+            if self.connection_type == "sqlalchemy":
+                cursor = self.connection.connect() # type: ignore
+                query = text(query)
+                
+                result = cursor.execute(query)
+
+                column_names = result.keys()
+
+            else:
+                cursor = self.connection.cursor()  # type: ignore
+                
+
+                result = cursor.execute(query)
+                column_names = [column[0] for column in cursor.description]
+                
+            
+            
 
             total_records = 0
 
             while True:
-                rows = cursor.fetchmany(chunksize)
+
+                if self.connection_type == "sqlalchemy":
+                    rows = result.fetchmany(chunksize)
+                else:
+                    rows = cursor.fetchmany(chunksize)
                 if not rows:
                     break
 
                 # Create a pyarrow Table from the fetched rows
-                chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
 
-                # Collect column names
-                column_names.update(chunk_df.column_names)
+                
+                # chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
+                chunk_df = pa.Table.from_pydict(dict(zip(column_names, zip(*rows))))
 
 
                 # Convert columns based on specified data types
-                for columns, dtype in [(category_columns, 'category'), 
-                                       (bool_columns, 'bool'), 
-                                       (float_columns, 'float64'),
-                                       (integer_columns, 'int64'),
-                                       (object_columns, 'object'),
-                                       (timestamp_columns, 'timestamp')
-
-                                       ]:
-                    if columns:  
-                        for column in columns:
-                            if column in chunk_df.column_names:
-                                if dtype == "category":
-                                    # Convert column to string first, then cast to dictionary
-                                    chunk_df = chunk_df.set_column(
-                                        chunk_df.schema.get_field_index(column),
-                                        column,
-                                        chunk_df.column(column).cast(pa.string()).dictionary_encode()
-                                    )
-                                elif dtype == "timestamp":
-                                    # Convert to timestamp[us] (or another timestamp type like timestamp[s])
-                                    chunk_df = chunk_df.set_column(
-                                        chunk_df.schema.get_field_index(column),
-                                        column,
-                                        chunk_df.column(column).cast(pa.timestamp('us'))
-                                    )
-
-                                elif dtype == "object":
-                                    # Convert to string (object type is typically a string in pandas)
-                                    chunk_df = chunk_df.set_column(
-                                        chunk_df.schema.get_field_index(column),
-                                        column,
-                                        chunk_df.column(column).cast(pa.string())
-                                    )
-                                else:
-                                    chunk_df = chunk_df.set_column(
-                                        chunk_df.schema.get_field_index(column),
-                                        column,
-                                        chunk_df.column(column).cast(pa.type_for_alias(dtype))  
-                                    )
-
-                # Cast decimal columns to desired precision and scale
-                for column in chunk_df.column_names:
-                    column_type = chunk_df.schema.field(column).type
-                    if pa.types.is_decimal(column_type):
-                        # Cast to the desired decimal type with precision 38 and scale 20
-                        chunk_df = chunk_df.set_column(
-                            chunk_df.schema.get_field_index(column),
-                            column,
-                            chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
-                        )
+                chunk_df = self.convert_pyarrow_columns(chunk_df=chunk_df, 
+                                                        category_columns=category_columns, 
+                                                        bool_columns=bool_columns, 
+                                                        float_columns=float_columns,
+                                                        integer_columns=integer_columns,
+                                                        object_columns=object_columns,
+                                                        timestamp_columns=timestamp_columns)
 
 
                 chunks.append(chunk_df)
@@ -252,7 +382,7 @@ class MSSQL (SQL):
             return None
         
 
-
+    @logfire.instrument(msg_template='sql.get_full_data')
     def get_full_data(self, query, category_columns=None, bool_columns=None, 
                  float_columns=None, integer_columns=None,  
                  object_columns=None, timestamp_columns=None, progress_callback=None, *args, **kwargs):
@@ -280,7 +410,7 @@ class MSSQL (SQL):
             via a callback function.
 
         """
-        column_names = set()
+        
 
         desired_precision = 38
         desired_scale = 20
@@ -300,8 +430,9 @@ class MSSQL (SQL):
             # Convert to pyarrow Table
             df_pa = pa.Table.from_arrays([pa.array(col) for col in zip(*rows)], names=columns)
 
-            # Collect column names
-            column_names.update(df_pa.column_names)
+            # # Collect column names
+            # column_names = set()
+            # column_names.update(df_pa.column_names)
 
             # Convert columns based on specified data types
             for columns, dtype in [(category_columns, 'category'), 
@@ -366,7 +497,7 @@ class MSSQL (SQL):
             _log.print_message(other_message=str(e))
             return None
 
-
+    @logfire.instrument(msg_template='sql.insert_data')
     def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append"):
         """
         Insert records into a database table
@@ -397,7 +528,7 @@ class MSSQL (SQL):
             else:
                 print(f"Inserted {i + chunksize} rows out of {total} rows")
 
-
+    @logfire.instrument(msg_template='sql.update_data')
     def update_data(self, schema_name, table_name, update_records, keys):
         """
         Update records in a database table based on the provided keys.
@@ -458,7 +589,7 @@ class MSSQL (SQL):
                 if updates_processed % 1000 == 0:
                     print(f"{updates_processed} records updated")
 
-
+    @logfire.instrument(msg_template='sql.upsert_data')
     def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
 
         """
@@ -479,8 +610,9 @@ class MSSQL (SQL):
 
         """
     
-        # columns = df.columns[1:].tolist()
+        # create list of columns excluding the key columns
         columns = df.columns.tolist()
+        columns = [col for col in columns if col not in key_columns]
         
         # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
         set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
@@ -524,7 +656,7 @@ class MSSQL (SQL):
 
         return records_updated, query
 
-
+    @logfire.instrument(msg_template='sql.update_from_table')
     def update_from_table(self, df, target_table, source_table, key_columns):
 
         """
@@ -543,9 +675,11 @@ class MSSQL (SQL):
 
         """
     
-        update_columns = df.columns[1:].tolist()
+        # create list of columns excluding the key columns
+        columns = df.columns.tolist()
+        columns = [col for col in columns if col not in key_columns]
         
-        set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in update_columns])
+        set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
         
         
         # Construct the JOIN ON clause
@@ -561,9 +695,13 @@ class MSSQL (SQL):
         ON {join_on_clause}
         """
 
-        self.connection.execute(query)
+        self.connection.execute(query) # type: ignore
+
+        self.connection.commit() # type: ignore
+
 
     # truncate table
+    @logfire.instrument(msg_template='sql.truncate_table')
     def truncate_table(self, schema_name, table_name):
         """
         Truncate a table in the database
@@ -579,6 +717,7 @@ class MSSQL (SQL):
 
     
     # delete data from table
+    @logfire.instrument(msg_template='sql.delete_data')
     def delete_data(self, schema_name, table_name):
         """
         Delete data from a table in the database
@@ -593,6 +732,7 @@ class MSSQL (SQL):
 
 
     # delete data with conditions
+    @logfire.instrument(msg_template='sql.delete_data_with_conditions')
     def delete_data_with_conditions(self, schema_name, table_name, conditions):
         """
         Delete data from a table in the database based on the provided conditions
