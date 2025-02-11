@@ -85,7 +85,15 @@ class MSSQL (SQL):
             _log.print_message()
 
 
-    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, float_columns=None, round_columns=None, progress_callback=None, *args, **kwargs):
+    def create_database(self):
+        """
+        Create a new database
+        """
+        self.connection.cursor.execute(f"CREATE DATABASE {self.database}") # type: ignore
+        self.connection.commit() # type: ignore
+
+
+
         """
         Get data from the database in chunks, converting specified columns to the category dtype.
 
