@@ -105,12 +105,44 @@ class MSSQL (SQL):
 
 
 
+    def schema_exists(self, schema_name):
         """
-        Get data from the database in chunks, converting specified columns to the category dtype.
+        Check if a schema exists in the database
 
         Args:
-            query: str - SQL query to be executed
-            chunksize: int - Number of rows per chunk
+            schema_name: str - The name of the schema to check
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"SELECT schema_id FROM sys.schemas WHERE name = '{schema_name}'")
+
+        if cursor.fetchone():
+            return True
+        
+        return False
+    
+
+    def create_schema(self, schema_name):
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"""
+            CREATE SCHEMA {schema_name}
+        """)
+
+
+    def table_exists(self, schema_name, table_name):
+        """
+        Check if a table exists in the database
+
+        Args:
+            schema_name: str - The name of the schema to check
+            table_name: str - The name of the table to check
+        """
+        cursor = self.connection.cursor() # type: ignore
+        cursor.execute(f"SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema_name}' AND TABLE_NAME = '{table_name}'")
+
+        if cursor.fetchone():
+            return True
+        
+        return False
             category_columns: list - List of column names to be converted to category dtype
             progress_callback: function - Function to call to report progress
             *args, **kwargs - Additional arguments to pass to the progress_callback function
