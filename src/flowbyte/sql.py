@@ -143,6 +143,54 @@ class MSSQL (SQL):
             return True
         
         return False
+    def convert_pyarrow_columns(self, chunk_df, category_columns=None, bool_columns=None, float_columns=None):
+        """
+        Convert columns in a DataFrame to the specified data types using PyArrow
+
+        Args:
+            df: DataFrame - The DataFrame to convert
+            category_columns: list - List of column names to be converted to category dtype
+            bool_columns: list - List of column names to be converted to bool dtype
+            float_columns: list - List of column names to be converted to float dtype
+
+        Returns:
+            df: DataFrame - The DataFrame with the columns converted
+        """
+
+        desired_precision = 38
+        desired_scale = 20
+
+        # Convert columns based on specified data types
+        for col, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
+            if dtype:
+                for column in dtype:
+                    if column in chunk_df.column_names:
+                        chunk_df = chunk_df.set_column(
+                            chunk_df.schema.get_field_index(column),
+                            column,
+                            chunk_df.column(column).cast(pa.type_for_alias(col))
+                        )
+
+        # Cast decimal columns to desired precision and scale
+        for column in chunk_df.column_names:
+            column_type = chunk_df.schema.field(column).type
+            if pa.types.is_decimal(column_type):
+                # Cast to the desired decimal type with precision 38 and scale 20
+                chunk_df = chunk_df.set_column(
+                    chunk_df.schema.get_field_index(column),
+                    column,
+                    chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
+                )
+
+
+        return chunk_df
+    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, float_columns=None, progress_callback=None, *args, **kwargs): # type: ignore
+        """
+        Get data from the database in chunks, converting specified columns to the category dtype.
+
+        Args:
+            query: str - SQL query to be executed
+            chunksize: int - Number of rows per chunk
             category_columns: list - List of column names to be converted to category dtype
             progress_callback: function - Function to call to report progress
             *args, **kwargs - Additional arguments to pass to the progress_callback function
@@ -152,44 +200,45 @@ class MSSQL (SQL):
         """
 
         chunks = []
-        desired_precision = 38
-        desired_scale = 20
+
 
         try:
-            cursor = self.connection.cursor()  # type: ignore
-            cursor.execute(query)
+            if self.connection_type == "sqlalchemy":
+                cursor = self.connection.connect() # type: ignore
+                query = text(query)
+                
+                result = cursor.execute(query)
+
+                column_names = result.keys()
+
+            else:
+                cursor = self.connection.cursor()  # type: ignore
+                
+
+                result = cursor.execute(query)
+                column_names = [column[0] for column in cursor.description]
+                
+            
+            
 
             total_records = 0
 
             while True:
-                rows = cursor.fetchmany(chunksize)
+
+                if self.connection_type == "sqlalchemy":
+                    rows = result.fetchmany(chunksize)
+                else:
+                    rows = cursor.fetchmany(chunksize)
                 if not rows:
                     break
 
                 # Create a pyarrow Table from the fetched rows
-                chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
-
+                
+                # chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
+                chunk_df = pa.Table.from_pydict(dict(zip(column_names, zip(*rows))))
+                
                 # Convert columns based on specified data types
-                for col, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
-                    if dtype:
-                        for column in dtype:
-                            if column in chunk_df.column_names:
-                                chunk_df = chunk_df.set_column(
-                                    chunk_df.schema.get_field_index(column),
-                                    column,
-                                    chunk_df.column(column).cast(pa.type_for_alias(col))
-                                )
-
-                # Cast decimal columns to desired precision and scale
-                for column in chunk_df.column_names:
-                    column_type = chunk_df.schema.field(column).type
-                    if pa.types.is_decimal(column_type):
-                        # Cast to the desired decimal type with precision 38 and scale 20
-                        chunk_df = chunk_df.set_column(
-                            chunk_df.schema.get_field_index(column),
-                            column,
-                            chunk_df.column(column).cast(pa.decimal128(desired_precision, desired_scale))
-                        )
+                chunk_df = self.convert_pyarrow_columns(chunk_df, category_columns, bool_columns, float_columns)
 
                 chunks.append(chunk_df)
 
