@@ -22,6 +22,8 @@ dependencies = [
   "pyarrow",
   "logfire",
   "logfire[sqlalchemy]"
+  "ipython",
+  "adlfs"
 ]
 
 [project.urls]

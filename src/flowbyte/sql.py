@@ -7,6 +7,7 @@ import pyarrow as pa
 import urllib.parse
 import pandas as pd
 import numpy as np
+from .log import Log
 import sys
 from datetime import datetime
 import logfire
@@ -77,6 +78,7 @@ class MSSQL (SQL):
             _log.message = f"Connected Successfully to: \n- Server: {self.host}\n- Database: {self.database}"
             _log.status = "success"
             _log.print_message()
+
 
         except Exception as e:
             _log.message = "Error connecting to the database"
@@ -163,7 +165,7 @@ class MSSQL (SQL):
 
     
     @logfire.instrument(msg_template='sql.get_data.convert_pyarrow_columns')
-    def convert_pyarrow_columns(self, chunk_df, category_columns=None, bool_columns=None, float_columns=None):
+    def convert_pyarrow_columns(self, chunk_df, category_columns=None, bool_columns=None, float_columns=None, integer_columns = None, object_columns=None, timestamp_columns=None):
         """
         Convert columns in a DataFrame to the specified data types using PyArrow
 
@@ -181,15 +183,45 @@ class MSSQL (SQL):
         desired_scale = 20
 
         # Convert columns based on specified data types
-        for col, dtype in [(category_columns, 'category'), (bool_columns, 'bool'), (float_columns, 'float')]:
-            if dtype:
-                for column in dtype:
+        for columns, dtype in [(category_columns, 'category'), 
+                                (bool_columns, 'bool'), 
+                                (float_columns, 'float64'),
+                                (integer_columns, 'int64'),
+                                (object_columns, 'object'),
+                                (timestamp_columns, 'timestamp')
+
+                                ]:
+            if columns:  
+                for column in columns:
                     if column in chunk_df.column_names:
-                        chunk_df = chunk_df.set_column(
-                            chunk_df.schema.get_field_index(column),
-                            column,
-                            chunk_df.column(column).cast(pa.type_for_alias(col))
-                        )
+                        if dtype == "category":
+                            # Convert column to string first, then cast to dictionary
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.string()).dictionary_encode()
+                            )
+                        elif dtype == "timestamp":
+                            # Convert to timestamp[us] (or another timestamp type like timestamp[s])
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.timestamp('us'))
+                            )
+
+                        elif dtype == "object":
+                            # Convert to string (object type is typically a string in pandas)
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.string())
+                            )
+                        else:
+                            chunk_df = chunk_df.set_column(
+                                chunk_df.schema.get_field_index(column),
+                                column,
+                                chunk_df.column(column).cast(pa.type_for_alias(dtype))  
+                            )
 
         # Cast decimal columns to desired precision and scale
         for column in chunk_df.column_names:
@@ -207,22 +239,52 @@ class MSSQL (SQL):
 
 
     @logfire.instrument(msg_template='sql.get_data')
-    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, float_columns=None, progress_callback=None, *args, **kwargs): # type: ignore
+    def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, 
+                 float_columns=None, integer_columns=None, 
+                 object_columns=None, timestamp_columns=None, 
+                 progress_callback=None, *args, **kwargs): # type: ignore
         """
-        Get data from the database in chunks, converting specified columns to the category dtype.
+        Get data from the database in chunks, converting specified columns to the appropriate data types.
 
         Args:
             query: str - SQL query to be executed
             chunksize: int - Number of rows per chunk
             category_columns: list - List of column names to be converted to category dtype
+            bool_columns: list - List of column names to be converted to bool dtype
+            float_columns: list - List of column names to be converted to float dtype
+            integer_columns: list - List of column names to be converted to int dtype
+            object_columns: list - List of column names to be converted to object (string) dtype
+            timestamp_columns: list - List of column names to be converted to timestamp dtype
             progress_callback: function - Function to call to report progress
             *args, **kwargs - Additional arguments to pass to the progress_callback function
 
         Returns:
-            df: DataFrame - The concatenated DataFrame containing the data
+            df: DataFrame - The concatenated DataFrame containing the data, or None if an error occurred.
+
+        Description:
+            This function executes the provided SQL query and retrieves the data in chunks. It then converts
+            specified columns to the appropriate data types (e.g., category, bool, float, integer, and decimal) 
+            based on the input parameters. The function also handles any necessary rounding for the specified 
+            columns and aligns all chunks to ensure that the column structure is consistent across all chunks.
+
+            The function also includes a progress callback that can be used to track the status of the data retrieval 
+            process. After fetching all the chunks, the function concatenates them into a single DataFrame and returns it.
+
+            In case of any errors (e.g., casting errors or SQL execution issues), the function returns `None` and logs 
+            an error message.
+
+        Note:
+        - It is important to define the column names for each type (category, bool, float, int, decimal, object, timestamp).
+        - If a column is not defined in the corresponding list, it may not be cast to the correct type, which could result in errors during processing.
+        - If columns contain NULL values or different types across chunks, it could lead to schema errors. 
+        - Ensure columns with NULL values are defined properly in their respective types to avoid errors.
         """
 
         chunks = []
+        total_records = 0
+        column_names = set()
+
+
 
 
         try:
@@ -256,14 +318,24 @@ class MSSQL (SQL):
                     break
 
                 # Create a pyarrow Table from the fetched rows
+
                 
                 # chunk_df = pa.Table.from_pydict(dict(zip([column[0] for column in cursor.description], zip(*rows))))
                 chunk_df = pa.Table.from_pydict(dict(zip(column_names, zip(*rows))))
-                
+
+
                 # Convert columns based on specified data types
-                chunk_df = self.convert_pyarrow_columns(chunk_df, category_columns, bool_columns, float_columns)
+                chunk_df = self.convert_pyarrow_columns(chunk_df=chunk_df, 
+                                                        category_columns=category_columns, 
+                                                        bool_columns=bool_columns, 
+                                                        float_columns=float_columns,
+                                                        integer_columns=integer_columns,
+                                                        object_columns=object_columns,
+                                                        timestamp_columns=timestamp_columns)
+
 
                 chunks.append(chunk_df)
+            
 
                 # Print the progress if progress_callback is provided
                 if progress_callback:
@@ -282,8 +354,140 @@ class MSSQL (SQL):
             self.disconnect()
 
             # Concatenate all chunks into a single Table
-            df = pa.concat_tables(chunks)
-            df = df.to_pandas()
+            if chunks:
+                df = pa.concat_tables(chunks).to_pandas()
+            else:
+                _log.message = "Query returned no data"
+                _log.status = "fail"
+                _log.print_message()
+                df = pd.DataFrame()
+
+            return df 
+
+        except Exception as e:
+            # Print the error message
+            _log.message = "Error executing the query"
+            _log.status = "fail"
+            _log.print_message(other_message=str(e))
+
+            # Print additional note about column types
+            _log.message = "Note: It is important to define the expected column types explicitly (category, bool, float, int, decimal, object, timestamp)."
+            _log.status = "warning"
+            _log.print_message()
+            
+
+            _log.message = "If columns contain NULL values or different types across chunks, it could lead to schema errors. Ensure columns with NULL values are defined properly in their respective types to avoid errors."
+            _log.status = "warning"
+            _log.print_message()
+            return None
+        
+
+    @logfire.instrument(msg_template='sql.get_full_data')
+    def get_full_data(self, query, category_columns=None, bool_columns=None, 
+                 float_columns=None, integer_columns=None,  
+                 object_columns=None, timestamp_columns=None, progress_callback=None, *args, **kwargs):
+        """
+        Executes an SQL query and retrieves data from the database, returning it as a pandas DataFrame.
+
+        Args:
+            query : str - The SQL query to execute.
+            category_columns : list, optional - List of columns to be converted to categorical (dictionary-encoded) format.
+            bool_columns : list, optional - List of columns to be converted to boolean type.
+            float_columns : list, optional - List of columns to be converted to float64 type.
+            integer_columns : list, optional - List of columns to be converted to int64 type.
+            object_columns : list, optional - List of columns to be converted to string (object) type.
+            timestamp_columns : list, optional - List of columns to be converted to timestamp[us] format.
+            progress_callback : function, optional - A function that receives progress updates in the form of a status message.
+
+        Returns:
+            pandas.DataFrame or None
+                A DataFrame containing the query results, with specified data types applied.
+                Returns None if an error occurs during execution.
+
+        Description:
+            This function fetches data using a database cursor, converts it into a PyArrow Table, and applies
+            type conversions based on user-specified column categories. It also supports progress reporting 
+            via a callback function.
+
+        """
+        
+
+        desired_precision = 38
+        desired_scale = 20
+
+        try:
+            cursor = self.connection.cursor()  # type: ignore
+            cursor.execute(query)
+
+            # Fetch rows and column names
+            rows = cursor.fetchall()
+            columns = [column[0] for column in cursor.description]
+
+
+            if not rows:
+                return pd.DataFrame()
+
+            # Convert to pyarrow Table
+            df_pa = pa.Table.from_arrays([pa.array(col) for col in zip(*rows)], names=columns)
+
+            # # Collect column names
+            # column_names = set()
+            # column_names.update(df_pa.column_names)
+
+            # Convert columns based on specified data types
+            for columns, dtype in [(category_columns, 'category'), 
+                                    (bool_columns, 'bool'), 
+                                    (float_columns, 'float64'),
+                                    (integer_columns, 'int64'),
+                                    (object_columns, 'object'),
+                                    (timestamp_columns, 'timestamp')
+
+                                    ]:
+                if columns:  
+                    for column in columns:
+                        if column in df_pa.column_names:
+                            if dtype == "category":
+                                # Convert column to string first, then cast to dictionary
+                                df_pa = df_pa.set_column(
+                                    df_pa.schema.get_field_index(column),
+                                    column,
+                                    df_pa.column(column).cast(pa.string()).dictionary_encode()
+                                )
+                            elif dtype == "timestamp":
+                                # Convert to timestamp[us] (or another timestamp type like timestamp[s])
+                                df_pa = df_pa.set_column(
+                                    df_pa.schema.get_field_index(column),
+                                    column,
+                                    df_pa.column(column).cast(pa.timestamp('us'))
+                                )
+
+                            elif dtype == "object":
+                                # Convert to string (object type is typically a string in pandas)
+                                df_pa = df_pa.set_column(
+                                    df_pa.schema.get_field_index(column),
+                                    column,
+                                    df_pa.column(column).cast(pa.string())
+                                )
+                            else:
+                                df_pa = df_pa.set_column(
+                                    df_pa.schema.get_field_index(column),
+                                    column,
+                                    df_pa.column(column).cast(pa.type_for_alias(dtype))  
+                                )
+
+            # Progress reporting
+            if progress_callback:
+                total_records = df_pa.num_rows
+                memory_used = df_pa.nbytes / 1024**2  # Convert bytes to MB
+                message = f"Records: {total_records} | Memory Used: {memory_used:.2f} MB"
+
+                sys.stdout.flush()
+                sys.stdout.write('\033[F\033[K')  # Move up and clear line
+                progress_callback(message, *args, **kwargs)
+
+            # Convert to pandas DataFrame
+            df = df_pa.to_pandas()
+
             return df
 
         except Exception as e:
