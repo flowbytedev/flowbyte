@@ -249,6 +249,71 @@ class MSSQL (SQL):
                     print(f"{updates_processed} records updated")
 
 
+    def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
+
+        """
+        Update records in a target table from a source table based on the provided keys.
+
+        Args:
+            df (pd.DataFrame): The DataFrame containing the data to update.
+            target_table (str): The name of the target table to update.
+            source_table (str): The name of the source table to update from.
+            key_columns (list of str): The columns to use as keys for updating records.
+            delete_not_matched (bool): Whether to delete records in the target table that are not in the source table.
+
+        Remarks:
+            The name of the columns should be the same as the columns in the target and source tables.
+
+        Returns:
+            Number of records updated, query
+
+        """
+    
+        # columns = df.columns[1:].tolist()
+        columns = df.columns.tolist()
+        
+        # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
+        set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
+
+        columns_list = ", ".join(columns)
+        values_list = ", ".join([f"source.{col}" for col in columns])
+        
+        
+        
+        # Construct the JOIN ON clause
+        # join_on_clause = " AND ".join([f"{target_table}.{col} = {source_table}.{col}" for col in key_columns])
+        join_on_clause = " AND ".join([f"target.{col} = source.{col}" for col in key_columns])
+        
+        update_statement = f"UPDATE SET {set_clause}"
+        insert_statement = f"INSERT ({columns_list}) VALUES ({values_list})"
+
+        # Form the complete SQL query
+        query = f"""
+            MERGE {target_table} AS target
+            USING {source_table} AS source
+            ON {join_on_clause}
+            WHEN MATCHED THEN
+                {update_statement}
+            WHEN NOT MATCHED THEN
+                {insert_statement}
+            """
+
+        if delete_not_matched:
+            delete_statement = f"DELETE"
+            query += f"""
+            WHEN NOT MATCHED BY SOURCE THEN
+                {delete_statement}
+            """
+
+        query += ";"
+
+        cursor = self.connection.execute(query)
+        self.connection.commit() # type: ignore
+
+        records_updated = cursor.rowcount
+
+        return records_updated, query
+
 
     def update_from_table(self, df, target_table, source_table, key_columns):
 
