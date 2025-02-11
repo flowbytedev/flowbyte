@@ -1,35 +1,50 @@
+from .log import Log
 from pydantic import BaseModel
 import pyodbc
 import sqlalchemy
-from sqlalchemy import and_, Table, MetaData
+from sqlalchemy import and_, Table, MetaData, text
 import pyarrow as pa
 import urllib.parse
 import pandas as pd
 import numpy as np
-from .log import Log
 import sys
+from datetime import datetime
+import logfire
 
 _log = Log("", "")
 
 class SQL:
     host: str
+    # optional
     database: str
     username: str
     password: str
+    logfire_token: str = None
+    
 
 
 class MSSQL (SQL):
     driver: str
     connection_type: str
-    connection: None
+    connection = None
 
-    def __init__(self, connection_type, host, database, username, password, driver):
+    def __init__(self, connection_type, host, database, username, password, driver, logfire_token=None):
         self.host = host
         self.database = database
         self.username = username
         self.password = password
         self.driver = driver
         self.connection_type = connection_type
+        self.connection = None # type: ignore
+        self.logfire_token = logfire_token
+
+        if self.logfire_token:
+            logfire.configure(token=self.logfire_token, environment="flowbyte", service_name="mssql")
+
+            if self.connection_type == "sqlalchemy":
+                logfire.instrument_sqlalchemy(engine=self.connection)
+
+
     def check_database_exists(self):
         
         # cursor = self.connection.cursor()
@@ -44,6 +59,8 @@ class MSSQL (SQL):
         
 
         return exists
+    
+    @logfire.instrument(msg_template='sql.connect')
     def connect(self):
 
         """
@@ -143,6 +160,9 @@ class MSSQL (SQL):
             return True
         
         return False
+
+    
+    @logfire.instrument(msg_template='sql.get_data.convert_pyarrow_columns')
     def convert_pyarrow_columns(self, chunk_df, category_columns=None, bool_columns=None, float_columns=None):
         """
         Convert columns in a DataFrame to the specified data types using PyArrow
@@ -184,6 +204,9 @@ class MSSQL (SQL):
 
 
         return chunk_df
+
+
+    @logfire.instrument(msg_template='sql.get_data')
     def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, float_columns=None, progress_callback=None, *args, **kwargs): # type: ignore
         """
         Get data from the database in chunks, converting specified columns to the category dtype.
@@ -270,7 +293,7 @@ class MSSQL (SQL):
             _log.print_message(other_message=str(e))
             return None
 
-
+    @logfire.instrument(msg_template='sql.insert_data')
     def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append"):
         """
         Insert records into a database table
@@ -301,7 +324,7 @@ class MSSQL (SQL):
             else:
                 print(f"Inserted {i + chunksize} rows out of {total} rows")
 
-
+    @logfire.instrument(msg_template='sql.update_data')
     def update_data(self, schema_name, table_name, update_records, keys):
         """
         Update records in a database table based on the provided keys.
@@ -362,7 +385,7 @@ class MSSQL (SQL):
                 if updates_processed % 1000 == 0:
                     print(f"{updates_processed} records updated")
 
-
+    @logfire.instrument(msg_template='sql.upsert_data')
     def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
 
         """
@@ -383,8 +406,9 @@ class MSSQL (SQL):
 
         """
     
-        # columns = df.columns[1:].tolist()
+        # create list of columns excluding the key columns
         columns = df.columns.tolist()
+        columns = [col for col in columns if col not in key_columns]
         
         # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
         set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
@@ -428,7 +452,7 @@ class MSSQL (SQL):
 
         return records_updated, query
 
-
+    @logfire.instrument(msg_template='sql.update_from_table')
     def update_from_table(self, df, target_table, source_table, key_columns):
 
         """
@@ -447,9 +471,11 @@ class MSSQL (SQL):
 
         """
     
-        update_columns = df.columns[1:].tolist()
+        # create list of columns excluding the key columns
+        columns = df.columns.tolist()
+        columns = [col for col in columns if col not in key_columns]
         
-        set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in update_columns])
+        set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
         
         
         # Construct the JOIN ON clause
@@ -465,9 +491,13 @@ class MSSQL (SQL):
         ON {join_on_clause}
         """
 
-        self.connection.execute(query)
+        self.connection.execute(query) # type: ignore
+
+        self.connection.commit() # type: ignore
+
 
     # truncate table
+    @logfire.instrument(msg_template='sql.truncate_table')
     def truncate_table(self, schema_name, table_name):
         """
         Truncate a table in the database
@@ -483,6 +513,7 @@ class MSSQL (SQL):
 
     
     # delete data from table
+    @logfire.instrument(msg_template='sql.delete_data')
     def delete_data(self, schema_name, table_name):
         """
         Delete data from a table in the database
@@ -497,6 +528,7 @@ class MSSQL (SQL):
 
 
     # delete data with conditions
+    @logfire.instrument(msg_template='sql.delete_data_with_conditions')
     def delete_data_with_conditions(self, schema_name, table_name, conditions):
         """
         Delete data from a table in the database based on the provided conditions
