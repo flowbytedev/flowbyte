@@ -367,10 +367,21 @@ class MSSQL (SQL):
             return None
 
 
+    def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append"):
+        """
+        Insert records into a database table
+
+        Args:
+            schema: str - The schema name of the table
+            table_name: str - The name of the table to insert records into
+            insert_records: DataFrame - The records to insert, where each row is a record
+            chunksize: int - The number of rows to insert in each chunk
+            if_table_exists: str - The action to take if the table already exists. Options are 'fail', 'replace', 'append', 'truncate', 'drop'
+
+        Returns:
+            None
         
-
-
-    def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000):
+        """
         
         connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
         engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
@@ -380,7 +391,7 @@ class MSSQL (SQL):
         # with engine.connect() as conn:
         for i in range(0, total, chunksize):
             # print the values as details
-            insert_records.iloc[i:i+chunksize].to_sql(table_name, engine, if_exists="append", index=False, chunksize=chunksize, schema=schema) # type: ignore
+            insert_records.iloc[i:i+chunksize].to_sql(table_name, engine, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema) # type: ignore
             if(i + chunksize > total):
                 print(f"Inserted {total} rows out of {total} rows")
             else:
@@ -447,6 +458,71 @@ class MSSQL (SQL):
                 if updates_processed % 1000 == 0:
                     print(f"{updates_processed} records updated")
 
+
+    def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
+
+        """
+        Update records in a target table from a source table based on the provided keys.
+
+        Args:
+            df (pd.DataFrame): The DataFrame containing the data to update.
+            target_table (str): The name of the target table to update.
+            source_table (str): The name of the source table to update from.
+            key_columns (list of str): The columns to use as keys for updating records.
+            delete_not_matched (bool): Whether to delete records in the target table that are not in the source table.
+
+        Remarks:
+            The name of the columns should be the same as the columns in the target and source tables.
+
+        Returns:
+            Number of records updated, query
+
+        """
+    
+        # columns = df.columns[1:].tolist()
+        columns = df.columns.tolist()
+        
+        # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
+        set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
+
+        columns_list = ", ".join(columns)
+        values_list = ", ".join([f"source.{col}" for col in columns])
+        
+        
+        
+        # Construct the JOIN ON clause
+        # join_on_clause = " AND ".join([f"{target_table}.{col} = {source_table}.{col}" for col in key_columns])
+        join_on_clause = " AND ".join([f"target.{col} = source.{col}" for col in key_columns])
+        
+        update_statement = f"UPDATE SET {set_clause}"
+        insert_statement = f"INSERT ({columns_list}) VALUES ({values_list})"
+
+        # Form the complete SQL query
+        query = f"""
+            MERGE {target_table} AS target
+            USING {source_table} AS source
+            ON {join_on_clause}
+            WHEN MATCHED THEN
+                {update_statement}
+            WHEN NOT MATCHED THEN
+                {insert_statement}
+            """
+
+        if delete_not_matched:
+            delete_statement = f"DELETE"
+            query += f"""
+            WHEN NOT MATCHED BY SOURCE THEN
+                {delete_statement}
+            """
+
+        query += ";"
+
+        cursor = self.connection.execute(query)
+        self.connection.commit() # type: ignore
+
+        records_updated = cursor.rowcount
+
+        return records_updated, query
 
 
     def update_from_table(self, df, target_table, source_table, key_columns):
