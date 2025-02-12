@@ -8,19 +8,21 @@ import urllib.parse
 import pandas as pd
 import numpy as np
 from .log import Log
+from .telemetry import Telemetry
 import sys
-from datetime import datetime
 import logfire
 
 _log = Log("", "")
 
+
+
 class SQL:
+    telemetry: Telemetry
     host: str
     # optional
     database: str
     username: str
     password: str
-    logfire_token: str = None
     
 
 
@@ -29,7 +31,7 @@ class MSSQL (SQL):
     connection_type: str
     connection = None
 
-    def __init__(self, connection_type, host, database, username, password, driver, logfire_token=None):
+    def __init__(self, connection_type, host, database, username, password, driver, telemetry=False):
         self.host = host
         self.database = database
         self.username = username
@@ -37,15 +39,27 @@ class MSSQL (SQL):
         self.driver = driver
         self.connection_type = connection_type
         self.connection = None # type: ignore
-        self.logfire_token = logfire_token
+        self.telemetry = telemetry
 
-        if self.logfire_token:
-            logfire.configure(token=self.logfire_token, environment="flowbyte", service_name="mssql")
+        if self.telemetry.logger == "logfire":
+            logfire.instrument_system_metrics({
+                                                'process.runtime.cpu.utilization': ['used'],  
+                                                'system.cpu.simple_utilization': ['used'],  
+                                                'system.memory.utilization': ['available', 'used', 'free', 'active'], 
+                                                'system.swap.utilization': ['used'],  
+                                                'system.disk.io': ['read', 'write'],
+                                                'system.network.io': ['transmit', 'receive'],
+                                            })
 
             if self.connection_type == "sqlalchemy":
                 logfire.instrument_sqlalchemy(engine=self.connection)
+        else:
+            _log.message = "Flowbyte uses logfire for telemetry. You can benefit from logfire by setting the logger to 'logfire' in the telemetry section of the configuration file."
+            _log.status = "warning"
+            _log.print_message()
 
 
+    @logfire.instrument(msg_template='sql.check_database_exists')
     def check_database_exists(self):
         
         # cursor = self.connection.cursor()
@@ -88,7 +102,7 @@ class MSSQL (SQL):
             return None
 
     
-
+    @logfire.instrument(msg_template='sql.disconnect')
     def disconnect(self):
         """
         Close the connection to the database
@@ -114,7 +128,7 @@ class MSSQL (SQL):
             _log.status = "fail"
             _log.print_message()
 
-
+    @logfire.instrument(msg_template='sql.create_database')
     def create_database(self):
         """
         Create a new database
@@ -123,7 +137,7 @@ class MSSQL (SQL):
         self.connection.commit() # type: ignore
 
 
-
+    @logfire.instrument(msg_template='sql.schema_exists')
     def schema_exists(self, schema_name):
         """
         Check if a schema exists in the database
@@ -139,14 +153,14 @@ class MSSQL (SQL):
         
         return False
     
-
+    @logfire.instrument(msg_template='sql.create_schema')
     def create_schema(self, schema_name):
         cursor = self.connection.cursor() # type: ignore
         cursor.execute(f"""
             CREATE SCHEMA {schema_name}
         """)
 
-
+    @logfire.instrument(msg_template='sql.table_exists')
     def table_exists(self, schema_name, table_name):
         """
         Check if a table exists in the database
@@ -242,7 +256,7 @@ class MSSQL (SQL):
     def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, 
                  float_columns=None, integer_columns=None, 
                  object_columns=None, timestamp_columns=None, 
-                 progress_callback=None, *args, **kwargs): # type: ignore
+                 progress_callback=None, *args, **kwargs) -> pd.DataFrame: # type: ignore
         """
         Get data from the database in chunks, converting specified columns to the appropriate data types.
 
@@ -497,6 +511,7 @@ class MSSQL (SQL):
             _log.print_message(other_message=str(e))
             return None
 
+
     @logfire.instrument(msg_template='sql.insert_data')
     def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append"):
         """
@@ -527,6 +542,7 @@ class MSSQL (SQL):
                 print(f"Inserted {total} rows out of {total} rows")
             else:
                 print(f"Inserted {i + chunksize} rows out of {total} rows")
+
 
     @logfire.instrument(msg_template='sql.update_data')
     def update_data(self, schema_name, table_name, update_records, keys):
@@ -588,6 +604,7 @@ class MSSQL (SQL):
 
                 if updates_processed % 1000 == 0:
                     print(f"{updates_processed} records updated")
+
 
     @logfire.instrument(msg_template='sql.upsert_data')
     def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
@@ -656,6 +673,7 @@ class MSSQL (SQL):
 
         return records_updated, query
 
+
     @logfire.instrument(msg_template='sql.update_from_table')
     def update_from_table(self, df, target_table, source_table, key_columns):
 
@@ -700,7 +718,6 @@ class MSSQL (SQL):
         self.connection.commit() # type: ignore
 
 
-    # truncate table
     @logfire.instrument(msg_template='sql.truncate_table')
     def truncate_table(self, schema_name, table_name):
         """
@@ -716,7 +733,6 @@ class MSSQL (SQL):
 
 
     
-    # delete data from table
     @logfire.instrument(msg_template='sql.delete_data')
     def delete_data(self, schema_name, table_name):
         """
@@ -731,7 +747,6 @@ class MSSQL (SQL):
         self.connection.commit() # type: ignore
 
 
-    # delete data with conditions
     @logfire.instrument(msg_template='sql.delete_data_with_conditions')
     def delete_data_with_conditions(self, schema_name, table_name, conditions):
         """
