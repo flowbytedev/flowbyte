@@ -31,7 +31,7 @@ class MSSQL (SQL):
     connection_type: str
     connection = None
 
-    def __init__(self, connection_type, host, database, username, password, driver, telemetry=False):
+    def __init__(self, connection_type, host, database, username, password, driver, telemetry=Telemetry()):
         self.host = host
         self.database = database
         self.username = username
