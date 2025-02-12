@@ -42,14 +42,6 @@ class MSSQL (SQL):
         self.telemetry = telemetry
 
         if self.telemetry.logger == "logfire":
-            logfire.instrument_system_metrics({
-                                                'process.runtime.cpu.utilization': ['used'],  
-                                                'system.cpu.simple_utilization': ['used'],  
-                                                'system.memory.utilization': ['available', 'used', 'free', 'active'], 
-                                                'system.swap.utilization': ['used'],  
-                                                'system.disk.io': ['read', 'write'],
-                                                'system.network.io': ['transmit', 'receive'],
-                                            })
 
             if self.connection_type == "sqlalchemy":
                 logfire.instrument_sqlalchemy(engine=self.connection)

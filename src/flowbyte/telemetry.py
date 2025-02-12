@@ -12,6 +12,7 @@ _log = Log("", "")
 class Telemetry(BaseModel):
     logger: str = "logfire"
     code_source_root_path: str = "" #"/root/path"
+    include_syetem_metrics: bool = False
     
 
     def __init__(self, **data):
@@ -20,6 +21,16 @@ class Telemetry(BaseModel):
         if self.logger == "logfire":
             code_source = None
             logfire_token = os.getenv("LOGFIRE_TOKEN")
+
+        if self.include_syetem_metrics:
+            logfire.instrument_system_metrics({
+                'process.runtime.cpu.utilization': ['used'],  
+                'system.cpu.simple_utilization': ['used'],  
+                'system.memory.utilization': ['used', 'available', 'free', 'active'], 
+                'system.swap.utilization': ['used'],  
+                'system.disk.io': ['read', 'write'],
+                'system.network.io': ['transmit', 'receive'],
+            })
 
             
             repository=os.getenv("LOGFIRE_CODE_SOURCE")
