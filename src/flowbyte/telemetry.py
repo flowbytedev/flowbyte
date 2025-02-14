@@ -22,6 +22,13 @@ class Telemetry(BaseModel):
             code_source = None
             logfire_token = os.getenv("LOGFIRE_TOKEN")
 
+            if logfire_token is None:
+                _log.message = "FLOWBYTE | Telemetry: You can add your logfire token in .env using LOGFIRE_TOKEN"
+                _log.status = "warning"
+                _log.print_message()
+            else:
+                logfire.configure(token=logfire_token, environment="flowbyte", service_name="mssql", code_source=code_source)
+
         if self.include_syetem_metrics:
             logfire.instrument_system_metrics({
                 'process.runtime.cpu.utilization': ['used'],  
@@ -50,7 +57,7 @@ class Telemetry(BaseModel):
                 
             
 
-            logfire.configure(token=logfire_token, environment="flowbyte", service_name="mssql", code_source=code_source)
+            
 
 
 
