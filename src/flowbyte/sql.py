@@ -621,22 +621,28 @@ class MSSQL (SQL):
     
         # create list of columns excluding the key columns
         columns = df.columns.tolist()
-        columns = [col for col in columns if col not in key_columns]
-        
-        # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
-        set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
 
         columns_list = ", ".join(columns)
         values_list = ", ".join([f"source.{col}" for col in columns])
         
+        insert_statement = f"INSERT ({columns_list}) VALUES ({values_list})"
+
+        join_on_clause = " AND ".join([f"target.{col} = source.{col}" for col in key_columns])
         
+        # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
+        
+
+        columns = [col for col in columns if col not in key_columns]
+
+        set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
+        update_statement = f"UPDATE SET {set_clause}"
         
         # Construct the JOIN ON clause
         # join_on_clause = " AND ".join([f"{target_table}.{col} = {source_table}.{col}" for col in key_columns])
-        join_on_clause = " AND ".join([f"target.{col} = source.{col}" for col in key_columns])
         
-        update_statement = f"UPDATE SET {set_clause}"
-        insert_statement = f"INSERT ({columns_list}) VALUES ({values_list})"
+        
+        records_updated = 0
+        
 
         # Form the complete SQL query
         query = f"""
@@ -658,10 +664,9 @@ class MSSQL (SQL):
 
         query += ";"
 
-        cursor = self.connection.execute(query)
-        self.connection.commit() # type: ignore
 
-        records_updated = cursor.rowcount
+        records_updated = self.execute_query(query)
+        
 
         return records_updated, query
 
@@ -719,9 +724,18 @@ class MSSQL (SQL):
             schema_name: str - The name of the schema containing the table
             table_name: str - The name of the table to truncate
         """
-        cursor = self.connection.cursor() # type: ignore
-        cursor.execute(f"TRUNCATE TABLE {schema_name}.{table_name}")
-        self.connection.commit() # type: ignore
+
+        query = f"TRUNCATE TABLE {schema_name}.{table_name}"
+
+        if self.connection_type == "sqlalchemy":
+
+            cursor = self.connection.connect()
+            cursor.execute(text(query))
+            cursor.commit()
+        else:
+            cursor = self.connection.cursor()  # type: ignore
+            cursor.execute(query)
+            self.connection.commit() # type: ignore
 
 
     
@@ -752,3 +766,45 @@ class MSSQL (SQL):
         cursor = self.connection.cursor() # type: ignore
         cursor.execute(f"DELETE FROM {schema_name}.{table_name} WHERE {conditions}")
         self.connection.commit() # type: ignore
+
+
+    
+
+    # Function to execute a query based on the connection type sqlalchmey or pyodbc and returns the row count
+    @logfire.instrument(msg_template='sql.execute_query')
+    def execute_query(self, query):
+        """
+        Execute a query and return the row count
+
+        Args:
+            query: str - The query to execute
+
+        Returns:
+            row_count: int - The number of rows affected by the query
+        """
+
+        # if self.connection_type == "sqlalchemy":
+        #     cursor = self.connection.connect()
+        #     cursor.execute(text(query))
+        #     cursor.commit()
+
+        # else:
+        #     cursor = self.connection.execute(query)
+        #     self.connection.commit() # type: ignore
+        #     records_updated = cursor.rowcount
+
+        row_count = 0
+
+        if self.connection_type == "sqlalchemy":
+            cursor = self.connection.connect()
+            cursor.execute(text(query))
+            # row_count = cursor.rowcount
+            cursor.commit()
+        else:
+            cursor = self.connection.cursor()
+            cursor.execute(query)
+            row_count = cursor.rowcount
+            self.connection.commit()
+
+        return row_count
+    
