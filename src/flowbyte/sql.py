@@ -1,6 +1,6 @@
 import pyodbc
 import sqlalchemy
-from sqlalchemy import and_, Table, MetaData
+from sqlalchemy import and_, Table, MetaData, text
 import pyarrow as pa
 import urllib.parse
 import pandas as pd
@@ -511,9 +511,17 @@ class MSSQL (SQL):
             schema_name: str - The name of the schema containing the table
             table_name: str - The name of the table to delete data from
         """
-        cursor = self.connection.cursor() # type: ignore
-        cursor.execute(f"DELETE FROM {schema_name}.{table_name}")
-        self.connection.commit() # type: ignore
+        if self.connection_type == "pyodbc":
+            cursor = self.connection.cursor() # type: ignore
+            cursor.execute(f"DELETE FROM [{schema_name}].[{table_name}]")
+            self.connection.commit() # type: ignore
+        elif self.connection_type == "sqlalchemy":
+            with self.connection.connect() as conn:
+                conn.execute(text(f"DELETE FROM [{schema_name}].[{table_name}]"))
+                # Depending on your SQLAlchemy version and configuration, you might need to commit
+                conn.commit()
+        else:
+            raise ValueError("Invalid connection type. Use 'pyodbc' or 'sqlalchemy'.")
 
 
     # delete data with conditions
@@ -526,6 +534,16 @@ class MSSQL (SQL):
             table_name: str - The name of the table to delete data from
             conditions: str - The conditions to use for deleting data
         """
-        cursor = self.connection.cursor() # type: ignore
-        cursor.execute(f"DELETE FROM {schema_name}.{table_name} WHERE {conditions}")
-        self.connection.commit() # type: ignore
+
+        if self.connection_type == "pyodbc":
+            cursor = self.connection.cursor() # type: ignore
+            cursor.execute(f"DELETE FROM [{schema_name}].[{table_name}] WHERE {conditions}")
+            self.connection.commit() # type: ignore
+        elif self.connection_type == "sqlalchemy":
+            with self.connection.connect() as conn:
+                conn.execute(text(f"DELETE FROM [{schema_name}].[{table_name}] WHERE {conditions}"))
+                # Depending on your SQLAlchemy version and configuration, you might need to commit
+                conn.commit()
+        else:
+            raise ValueError("Invalid connection type. Use 'pyodbc' or 'sqlalchemy'.")
+
