@@ -1,6 +1,8 @@
 [project]
 name = "flowbyte"
+
 version = "0.4.4"
+
 authors = [
   { name="Kevork Keheian", email="flowbyte@optiret.com" },
 ]
@@ -20,8 +22,12 @@ dependencies = [
   "sqlalchemy",
   "numpy",
   "pyarrow",
+  "logfire",
+  "logfire[sqlalchemy]",
+  "logfire[system-metrics]",
   "ipython",
-  "adlfs"
+  "adlfs",
+  "python-dotenv"
 ]
 
 [project.urls]
