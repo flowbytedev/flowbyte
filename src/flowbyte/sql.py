@@ -11,6 +11,7 @@ from .log import Log
 from .telemetry import Telemetry
 import sys
 import logfire
+import re
 
 _log = Log("", "")
 
@@ -56,15 +57,20 @@ class MSSQL (SQL):
         
         # cursor = self.connection.cursor()
 
-        query = f"SELECT db_id('{self.database}')"
-        
-        # cursor.execute(f"SELECT db_id('{self.database}')")
-        # exists = cursor.fetchone()[0] is not None
-
-        # check if the database exists without using the cursor
-        exists = self.connection.execute(query).fetchone()[0] is not None # type: ignore
         
 
+        if self.connection_type == "sqlalchemy":
+            query = text("SELECT db_id(:database)")  # Use a parameterized query
+            # Get a connection from the engine and then execute the query
+            with self.connection.connect() as conn:
+                exists = conn.execute(query, {"database": self.database}).fetchone()[0] is not None
+        else:
+            # pyodbc 
+            query = "SELECT db_id(?)"  # Use a parameterized query
+            cursor = self.connection.cursor()
+            cursor.execute(query, (self.database,))
+            exists = cursor.fetchone()[0] is not None
+        
         return exists
     
     @logfire.instrument(msg_template='sql.connect')
@@ -121,12 +127,22 @@ class MSSQL (SQL):
             _log.print_message()
 
     @logfire.instrument(msg_template='sql.create_database')
-    def create_database(self):
+    def create_database(self, database_name):
         """
         Create a new database
         """
-        self.connection.cursor.execute(f"CREATE DATABASE {self.database}") # type: ignore
-        self.connection.commit() # type: ignore
+
+        if self.connection_type == "sqlalchemy":
+            query = f"CREATE DATABASE [{database_name}]"
+            with self.connection.connect() as conn:
+                conn.execution_options(isolation_level="AUTOCOMMIT").execute(text(query))
+        else:
+            self.connection.autocommit = True  # ✅ REQUIRED for CREATE DATABASE
+            query = f"CREATE DATABASE [{database_name}]"
+            cursor = self.connection.cursor()  # type: ignore
+            cursor.execute(query)  # Parameterized query to prevent SQL injection
+            self.connection.autocommit = False  # Optional: restore default if needed
+
 
 
     @logfire.instrument(msg_template='sql.schema_exists')
@@ -137,14 +153,20 @@ class MSSQL (SQL):
         Args:
             schema_name: str - The name of the schema to check
         """
-        cursor = self.connection.cursor() # type: ignore
-        cursor.execute(f"SELECT schema_id FROM sys.schemas WHERE name = '{schema_name}'")
 
-        if cursor.fetchone():
-            return True
-        
-        return False
-    
+        if self.connection_type == "sqlalchemy":
+            
+            result = self.connection.execute(
+            text("SELECT schema_id FROM sys.schemas WHERE name = :name"),
+                {"name": schema_name}
+            )
+            return result.fetchone() is not None
+        else:  # pyodbc
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT schema_id FROM sys.schemas WHERE name = ?", (schema_name,))
+            return cursor.fetchone() is not None
+            
+
     @logfire.instrument(msg_template='sql.create_schema')
     def create_schema(self, schema_name):
         cursor = self.connection.cursor() # type: ignore
@@ -421,13 +443,22 @@ class MSSQL (SQL):
         desired_precision = 38
         desired_scale = 20
 
-        try:
-            cursor = self.connection.cursor()  # type: ignore
-            cursor.execute(query)
 
-            # Fetch rows and column names
-            rows = cursor.fetchall()
-            columns = [column[0] for column in cursor.description]
+
+
+        try:
+            if self.connection_type == "sqlalchemy":
+                with self.connection.connect() as conn:
+                    result = conn.execute(text(query))  # No parameters here
+                    rows = result.fetchall()
+                    columns = list(result.keys())
+            else: # pyodbc
+                cursor = self.connection.cursor()  # type: ignore
+                cursor.execute(query)
+
+                # Fetch rows and column names
+                rows = cursor.fetchall()
+                columns = [column[0] for column in cursor.description]
 
 
             if not rows:
@@ -600,50 +631,50 @@ class MSSQL (SQL):
 
     @logfire.instrument(msg_template='sql.upsert_data')
     def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
-
+ 
         """
         Update records in a target table from a source table based on the provided keys.
-
+ 
         Args:
             df (pd.DataFrame): The DataFrame containing the data to update.
             target_table (str): The name of the target table to update.
             source_table (str): The name of the source table to update from.
             key_columns (list of str): The columns to use as keys for updating records.
             delete_not_matched (bool): Whether to delete records in the target table that are not in the source table.
-
+ 
         Remarks:
             The name of the columns should be the same as the columns in the target and source tables.
-
+ 
         Returns:
             Number of records updated, query
-
+ 
         """
-    
+   
         # create list of columns excluding the key columns
         columns = df.columns.tolist()
-
-        columns_list = ", ".join(columns)
-        values_list = ", ".join([f"source.{col}" for col in columns])
-        
+ 
+        columns_list = ", ".join([f"[{col}]" for col in columns])
+        values_list = ", ".join([f"source.[{col}]" for col in columns])
+       
         insert_statement = f"INSERT ({columns_list}) VALUES ({values_list})"
-
-        join_on_clause = " AND ".join([f"target.{col} = source.{col}" for col in key_columns])
-        
+ 
+        join_on_clause = " AND ".join([f"target.[{col}] = source.[{col}]" for col in key_columns])
+       
         # set_clause = ", ".join([f"{target_table}.{col} = {source_table}.{col}" for col in columns])
-        
-
+       
+ 
         columns = [col for col in columns if col not in key_columns]
-
-        set_clause = ", ".join([f"target.{col} = source.{col}" for col in columns])
+ 
+        set_clause = ", ".join([f"target.[{col}] = source.[{col}]" for col in columns])
         update_statement = f"UPDATE SET {set_clause}"
-        
+       
         # Construct the JOIN ON clause
         # join_on_clause = " AND ".join([f"{target_table}.{col} = {source_table}.{col}" for col in key_columns])
-        
-        
+       
+       
         records_updated = 0
-        
-
+       
+ 
         # Form the complete SQL query
         query = f"""
             MERGE {target_table} AS target
@@ -654,20 +685,20 @@ class MSSQL (SQL):
             WHEN NOT MATCHED THEN
                 {insert_statement}
             """
-
+ 
         if delete_not_matched:
             delete_statement = f"DELETE"
             query += f"""
             WHEN NOT MATCHED BY SOURCE THEN
                 {delete_statement}
             """
-
+ 
         query += ";"
-
-
+ 
+ 
         records_updated = self.execute_query(query)
-        
-
+       
+ 
         return records_updated, query
 
 
@@ -817,10 +848,9 @@ class MSSQL (SQL):
         row_count = 0
 
         if self.connection_type == "sqlalchemy":
-            cursor = self.connection.connect()
-            cursor.execute(text(query))
-            # row_count = cursor.rowcount
-            cursor.commit()
+            with self.connection.begin() as conn:
+                result = conn.execute(text(query))
+                row_count = result.rowcount if result.rowcount is not None else 0
         else:
             cursor = self.connection.cursor()
             cursor.execute(query)
