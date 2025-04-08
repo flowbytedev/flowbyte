@@ -169,10 +169,43 @@ class MSSQL (SQL):
 
     @logfire.instrument(msg_template='sql.create_schema')
     def create_schema(self, schema_name):
-        cursor = self.connection.cursor() # type: ignore
-        cursor.execute(f"""
-            CREATE SCHEMA {schema_name}
-        """)
+
+        # Validate schema name to allow only alphanumeric characters, underscores, and optional square brackets
+        # Regex: allows [schema_name] or schema_name formats, where schema_name contains only alphanumeric characters and underscores
+        if not re.match(r'^\[?[A-Za-z0-9_]+\]?$|^[A-Za-z0-9_]+$', schema_name):
+            raise ValueError(f"Invalid schema name: {schema_name}. Only alphanumeric, underscores, and optional square brackets are allowed.")
+    
+        # If the schema name has brackets, strip them off
+        schema_name = schema_name.strip("[]")
+
+        if self.connection_type == "sqlalchemy":
+            connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
+            engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
+
+            with engine.connect() as connection:
+                if not sqlalchemy.inspect(connection).has_schema(schema_name):
+                    connection.execute(sqlalchemy.schema.CreateSchema(schema_name))
+                    connection.commit()
+                    print(f"Schema '{schema_name}' created successfully.")
+                else:
+                    print(f"Schema '{schema_name}' already exists.") 
+        else:
+            cursor = self.connection.cursor()
+            # Check if schema exists in sys.schemas
+            cursor.execute(
+                "SELECT 1 FROM sys.schemas WHERE name = ?",
+                (schema_name,)
+            )
+            result = cursor.fetchone()
+
+            # If schema does not exist, create it
+            if result is None:
+                cursor.execute(f"CREATE SCHEMA {schema_name}")
+                self.connection.commit()
+                print(f"Schema '{schema_name}' created successfully.")
+            else:
+                print(f"Schema '{schema_name}' already exists.") 
+
 
     @logfire.instrument(msg_template='sql.table_exists')
     def table_exists(self, schema_name, table_name):
@@ -183,13 +216,26 @@ class MSSQL (SQL):
             schema_name: str - The name of the schema to check
             table_name: str - The name of the table to check
         """
-        cursor = self.connection.cursor() # type: ignore
-        cursor.execute(f"SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{schema_name}' AND TABLE_NAME = '{table_name}'")
+        query = """
+            SELECT 1
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table
+        """
 
-        if cursor.fetchone():
-            return True
-        
-        return False
+        if self.connection_type == "sqlalchemy":
+            with self.connection.connect() as conn:
+                result = conn.execute(
+                    text(query),
+                    {"schema": schema_name, "table": table_name}
+                )
+                return result.fetchone() is not None
+        else: #pyodbc
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+                (schema_name, table_name)
+            )
+            return cursor.fetchone() is not None
 
     
     @logfire.instrument(msg_template='sql.get_data.convert_pyarrow_columns')
@@ -283,7 +329,12 @@ class MSSQL (SQL):
             integer_columns: list - List of column names to be converted to int dtype
             object_columns: list - List of column names to be converted to object (string) dtype
             timestamp_columns: list - List of column names to be converted to timestamp dtype
-            progress_callback: function - Function to call to report progress
+            progress_callback: function - Function to call to report progress. For example:
+                def print_progress(records):
+                    print(records)
+
+                # Usage:
+                sql.get_data(query, progress_callback=print_progress)
             *args, **kwargs - Additional arguments to pass to the progress_callback function
 
         Returns:
@@ -425,7 +476,12 @@ class MSSQL (SQL):
             integer_columns : list, optional - List of columns to be converted to int64 type.
             object_columns : list, optional - List of columns to be converted to string (object) type.
             timestamp_columns : list, optional - List of columns to be converted to timestamp[us] format.
-            progress_callback : function, optional - A function that receives progress updates in the form of a status message.
+            progress_callback : function, optional - A function that receives progress updates in the form of a status message. For example:
+                def print_progress(records):
+                    print(records)
+
+                # Usage:
+                sql.get_full_data(query, progress_callback=print_progress)
 
         Returns:
             pandas.DataFrame or None
@@ -478,7 +534,6 @@ class MSSQL (SQL):
                                     (integer_columns, 'int64'),
                                     (object_columns, 'object'),
                                     (timestamp_columns, 'timestamp')
-
                                     ]:
                 if columns:  
                     for column in columns:
@@ -536,7 +591,7 @@ class MSSQL (SQL):
 
 
     @logfire.instrument(msg_template='sql.insert_data')
-    def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append"):
+    def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append", progress_callback=None, *args, **kwargs):
         """
         Insert records into a database table
 
@@ -546,10 +601,15 @@ class MSSQL (SQL):
             insert_records: DataFrame - The records to insert, where each row is a record
             chunksize: int - The number of rows to insert in each chunk
             if_table_exists: str - The action to take if the table already exists. Options are 'fail', 'replace', 'append', 'truncate', 'drop'
+            progress_callback: function - Optional. A callback function to show progress. For example:
+                def print_progress(records):
+                    print(records)
+
+                # Usage:
+                sql.insert_data(schema=schema, table_name=table_name, insert_records=df, progress_callback=print_progress)
 
         Returns:
             None
-        
         """
         
         connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
@@ -563,8 +623,22 @@ class MSSQL (SQL):
             insert_records.iloc[i:i+chunksize].to_sql(table_name, engine, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema) # type: ignore
             if(i + chunksize > total):
                 print(f"Inserted {total} rows out of {total} rows")
+                
             else:
                 print(f"Inserted {i + chunksize} rows out of {total} rows")
+            
+            # Print the progress if progress_callback is provided
+            if progress_callback:
+                chunk_df = insert_records.iloc[i:i+chunksize]
+                total_records = i + len(chunk_df)
+                message = f"Inserted {total_records} Records out of {total} rows"
+
+                sys.stdout.flush()
+                sys.stdout.write('\033[F')  # Move cursor up one line
+                sys.stdout.write('\033[K')  # Clear line
+
+                progress_callback(message, *args, **kwargs)
+
 
 
     @logfire.instrument(msg_template='sql.update_data')
