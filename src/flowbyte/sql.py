@@ -179,10 +179,8 @@ class MSSQL (SQL):
         schema_name = schema_name.strip("[]")
 
         if self.connection_type == "sqlalchemy":
-            connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
-            engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
 
-            with engine.connect() as connection:
+            with self.connection.connect() as connection:
                 if not sqlalchemy.inspect(connection).has_schema(schema_name):
                     connection.execute(sqlalchemy.schema.CreateSchema(schema_name))
                     connection.commit()
@@ -612,15 +610,21 @@ class MSSQL (SQL):
             None
         """
         
-        connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
-        engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
+        # connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
+        # engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
+
+        is_pyodbc = False
+        if self.connection_type == 'pyodbc':
+            is_pyodbc = True
+            self.connection_type = 'sqlalchemy'
+            self.connect()
 
         total = insert_records.shape[0]
         print(f"Inserting {total} rows...")
         # with engine.connect() as conn:
         for i in range(0, total, chunksize):
             # print the values as details
-            insert_records.iloc[i:i+chunksize].to_sql(table_name, engine, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema) # type: ignore
+            insert_records.iloc[i:i+chunksize].to_sql(table_name, self.connection, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema) # type: ignore
             if(i + chunksize > total):
                 print(f"Inserted {total} rows out of {total} rows")
                 
@@ -638,6 +642,9 @@ class MSSQL (SQL):
                 sys.stdout.write('\033[K')  # Clear line
 
                 progress_callback(message, *args, **kwargs)
+
+        if is_pyodbc==True:
+            self.connection_type = 'pyodbc'
 
 
 
