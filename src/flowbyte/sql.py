@@ -619,6 +619,11 @@ class MSSQL (SQL):
             self.connection_type = 'sqlalchemy'
             self.connect()
 
+
+        if self.connection_type != 'sqlalchemy':
+            sys.stdout.write('Only sqlalchemy connection is supported for insert_data.\n')
+            return
+
         total = insert_records.shape[0]
         print(f"Inserting {total} rows...")
         # with engine.connect() as conn:
@@ -642,6 +647,7 @@ class MSSQL (SQL):
                 sys.stdout.write('\033[K')  # Clear line
 
                 progress_callback(message, *args, **kwargs)
+
 
         if is_pyodbc==True:
             self.connection_type = 'pyodbc'
@@ -711,7 +717,7 @@ class MSSQL (SQL):
 
 
     @logfire.instrument(msg_template='sql.upsert_data')
-    def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
+    def upsert_from_table(self, df, source_schema, target_schema, target_table, source_table, key_columns, delete_not_matched=False):
  
         """
         Update records in a target table from a source table based on the provided keys.
@@ -758,8 +764,8 @@ class MSSQL (SQL):
  
         # Form the complete SQL query
         query = f"""
-            MERGE {target_table} AS target
-            USING {source_table} AS source
+            MERGE [{target_schema}].[{target_table}] AS target
+            USING [{source_schema}].[{source_table}] AS source
             ON {join_on_clause}
             WHEN MATCHED THEN
                 {update_statement}
