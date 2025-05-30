@@ -1,7 +1,7 @@
 [project]
 name = "flowbyte"
 
-version = "0.4.7"
+version = "0.4.8"
 
 authors = [
   { name="Kevork Keheian", email="flowbyte@optiret.com" },
@@ -27,7 +27,10 @@ dependencies = [
   "logfire[system-metrics]",
   "ipython",
   "adlfs",
-  "python-dotenv"
+  "python-dotenv",
+  "Authlib",
+  "streamlit",
+  "duckdb"
 ]
 
 [project.urls]
