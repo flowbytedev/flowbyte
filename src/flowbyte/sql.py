@@ -12,6 +12,7 @@ from .telemetry import Telemetry
 import sys
 import logfire
 import re
+from sqlalchemy.dialects.mssql import NVARCHAR
 
 _log = Log("", "")
 
@@ -592,7 +593,7 @@ class MSSQL (SQL):
     def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append", progress_callback=None, *args, **kwargs):
         """
         Insert records into a database table
-
+ 
         Args:
             schema: str - The schema name of the table
             table_name: str - The name of the table to insert records into
@@ -602,51 +603,71 @@ class MSSQL (SQL):
             progress_callback: function - Optional. A callback function to show progress. For example:
                 def print_progress(records):
                     print(records)
-
+ 
                 # Usage:
                 sql.insert_data(schema=schema, table_name=table_name, insert_records=df, progress_callback=print_progress)
-
+ 
         Returns:
             None
         """
-        
+       
         # connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
         # engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
-
+ 
         is_pyodbc = False
         if self.connection_type == 'pyodbc':
             is_pyodbc = True
+            _log.message = "Only sqlalchemy connection is supported for insert_data.\n"
+            _log.status = "warning"
+            _log.print_message()
             self.connection_type = 'sqlalchemy'
             self.connect()
+            # sys.stdout.write('Connection converted to sqlalchemy.\n')
+            _log.message = "Connection converted to sqlalchemy.\n"
+            _log.status = "warning"
+            _log.print_message()
 
+            
+ 
         total = insert_records.shape[0]
         print(f"Inserting {total} rows...")
         # with engine.connect() as conn:
+ 
+        # Force NVARCHAR for all string/object columns
+        unicode_cols = insert_records.select_dtypes(include=["object", "string"]).columns
+        dtype_dict = {col: NVARCHAR(length=None) for col in unicode_cols}
+ 
         for i in range(0, total, chunksize):
             # print the values as details
-            insert_records.iloc[i:i+chunksize].to_sql(table_name, self.connection, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema) # type: ignore
+            insert_records.iloc[i:i+chunksize].to_sql(table_name, self.connection, if_exists=if_table_exists, index=False, chunksize=chunksize, schema=schema, dtype=dtype_dict) # type: ignore
             if(i + chunksize > total):
                 print(f"Inserted {total} rows out of {total} rows")
-                
+               
             else:
                 print(f"Inserted {i + chunksize} rows out of {total} rows")
-            
+           
             # Print the progress if progress_callback is provided
             if progress_callback:
                 chunk_df = insert_records.iloc[i:i+chunksize]
                 total_records = i + len(chunk_df)
                 message = f"Inserted {total_records} Records out of {total} rows"
-
+ 
                 sys.stdout.flush()
                 sys.stdout.write('\033[F')  # Move cursor up one line
                 sys.stdout.write('\033[K')  # Clear line
-
+ 
                 progress_callback(message, *args, **kwargs)
-
+ 
         if is_pyodbc==True:
             self.connection_type = 'pyodbc'
-
-
+            _log.message = "Connection returned to pyodbc.\n"
+            _log.status = "warning"
+            _log.print_message()
+            
+ 
+ 
+ 
+ 
 
     @logfire.instrument(msg_template='sql.update_data')
     def update_data(self, schema_name, table_name, update_records, keys):
@@ -711,7 +732,7 @@ class MSSQL (SQL):
 
 
     @logfire.instrument(msg_template='sql.upsert_data')
-    def upsert_from_table(self, df, target_table, source_table, key_columns, delete_not_matched=False):
+    def upsert_from_table(self, df, source_schema, target_schema, target_table, source_table, key_columns, delete_not_matched=False):
  
         """
         Update records in a target table from a source table based on the provided keys.
@@ -758,8 +779,8 @@ class MSSQL (SQL):
  
         # Form the complete SQL query
         query = f"""
-            MERGE {target_table} AS target
-            USING {source_table} AS source
+            MERGE [{target_schema}].[{target_table}] AS target
+            USING [{source_schema}].[{source_table}] AS source
             ON {join_on_clause}
             WHEN MATCHED THEN
                 {update_statement}
