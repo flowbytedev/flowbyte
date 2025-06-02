@@ -2,6 +2,7 @@
 import streamlit as st
 import duckdb
 from datetime import datetime
+import os
   
 
 
@@ -16,7 +17,9 @@ class TelemetryCollector:
     def __init__(self):
         # Fetch the DuckDB database path from Streamlit's secrets
         try:
-            self.db_path = st.secrets["duckdb"]["telemetry"]["path"]
+            self.db_path = st.secrets["flowbyte"]["telemetry"]["path"]
+            # create directory in case it doesn't exist
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         except KeyError:
             self.db_path = None
             
@@ -57,7 +60,7 @@ class TelemetryCollector:
         user_data = self.collect_data()
         
         # Connect to DuckDB
-        connection = duckdb.connect(self.db_path)
+        connection = duckdb.connect(self.db_path, read_only=False)
 
         # Insert user data into the telemetry table
         connection.execute("""
@@ -77,9 +80,6 @@ class TelemetryCollector:
             INSERT INTO user_telemetry (username, email, timestamp, url, page, name, ip_address)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (user_data["username"], user_data["email"], user_data["timestamp"], user_data["url"], user_data["page"], user_data["name"], user_data["ip_address"]))
-        
-        # Optionally display the data for debugging/logging purposes
-        st.write("User Data Collected:", user_data)
         
         # Close the connection
         connection.close()
