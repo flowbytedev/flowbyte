@@ -17,8 +17,13 @@ class TelemetryCollector:
     provider: str
     report: str
     page : str
+    operation: str
+    ip_address: str
+    report_type: str
+    consumption_method: str
 
-    def __init__(self, provider: str = None, workspace: str = None, report: str = None, page: str = None):
+    def __init__(self, provider: str = None, workspace: str = None, report: str = None, page: str = None,
+                    operation: str = None, report_type: str = None, consumption_method: str = None):
         # Fetch the DuckDB database path from Streamlit's secrets
         try:
             self.db_path = st.secrets["flowbyte"]["telemetry"]["path"]
@@ -34,6 +39,11 @@ class TelemetryCollector:
         self.report = report if report else "default_report"
         self.report_url = st.context.url
         self.page = page if page else st.session_state.get("page_name", "unknown_page")
+        self.ip_address = st.context.ip_address or "unknown_ip"
+        self.operation = operation if operation else "ViewReport"
+        self.report_type = report_type if report_type else "Streamlit"
+        self.consumption_method = consumption_method if consumption_method else "Web"
+
     
         user = st.user
         self.username = user.get("preferred_username", "Unknown")
@@ -54,6 +64,9 @@ class TelemetryCollector:
             "view_count": self.view_count,
             "report": self.report,
             "provider": self.provider,
+            "operation": self.operation,
+            "report_type": self.report_type,
+            "consumption_method": self.consumption_method,
         }
         return user_data
 
@@ -79,16 +92,19 @@ class TelemetryCollector:
                 workspace VARCHAR,
                 provider VARCHAR,
                 view_count INTEGER,
-                report VARCHAR
+                report VARCHAR,
+                operation VARCHAR,
+                report_type VARCHAR,
+                consumption_method VARCHAR
             );
         """)
 
         # Insert data into the table
         connection.execute("""
             INSERT INTO user_telemetry (
-                username, email, timestamp, url, page, workspace, provider, view_count, report
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_data["username"], user_data["email"], user_data["timestamp"], user_data["url"], user_data["page"], user_data["workspace"], user_data["provider"], user_data["view_count"], user_data["report"])
+                username, email, timestamp, url, page, workspace, provider, view_count, report, operation, report_type, consumption_method
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_data["username"], user_data["email"], user_data["timestamp"], user_data["url"], user_data["page"], user_data["workspace"], user_data["provider"], user_data["view_count"], user_data["report"], user_data["operation"], user_data["report_type"], user_data["consumption_method"])
         )
 
         # Optionally display the data for debugging/logging purposes
