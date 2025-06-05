@@ -2,52 +2,71 @@
 import streamlit as st
 import duckdb
 from datetime import datetime
-import os
   
 
 
 class TelemetryCollector:
     """
-    A class to collect and log user telemetry data in a Streamlit application.
+    A class to collect and log user telemetry data in a Streamlit workspace.
     This class collects user information such as username, email, name, timestamp,
     You should add the below to your Streamlit secrets:
         [flowbyte.telemetry]
         path = "/path/database.duckdb"
     """
-    def __init__(self):
+    workspace: str
+    provider: str
+    report: str
+    page : str
+    operation: str
+    ip_address: str
+    report_type: str
+    consumption_method: str
+
+    def __init__(self, provider: str = None, workspace: str = None, report: str = None, page: str = None,
+                    operation: str = None, report_type: str = None, consumption_method: str = None):
         # Fetch the DuckDB database path from Streamlit's secrets
         try:
             self.db_path = st.secrets["flowbyte"]["telemetry"]["path"]
-            # create directory in case it doesn't exist
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         except KeyError:
             self.db_path = None
             
         if not self.db_path:
             raise ValueError("DuckDB path not found in Streamlit secrets.")
         
-        
+        self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.provider = provider.upper() if provider else "UNKNOWN"
+        self.workspace = workspace if workspace else st.session_state.get("workspace", "default_workspace")
+        self.report = report if report else "default_report"
+        self.report_url = st.context.url
+        self.page = page if page else st.session_state.get("page_name", "unknown_page")
+        self.ip_address = st.context.ip_address or "unknown_ip"
+        self.operation = operation if operation else "ViewReport"
+        self.report_type = report_type if report_type else "Streamlit"
+        self.consumption_method = consumption_method if consumption_method else "Web"
+
+    
         user = st.user
-        
-        # Fetch user data from Streamlit's `st.user` (if available) and `st.context`
         self.username = user.get("preferred_username", "Unknown")
         self.email = user.get("email", "unknown@example.com")
         self.name = user.get("name", "Unknown User")
-        self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.page_url = st.context.url
-        self.page_name = st.context.url.split("/")[-1] if st.context.url else "Unknown Page"
-        self.ip_address = st.context.ip_address if st.context.ip_address else "Unknown IP"
+        self.view_count = 1
 
     def collect_data(self):
         # Collects the necessary user data
         user_data = {
             "username": self.username,
             "email": self.email,
-            "name": self.name,
             "timestamp": self.timestamp,
-            "url": self.page_url,
-            "page": self.page_name,
-            "ip_address": self.ip_address
+            "url": self.report_url,
+            "page": self.page,
+            "workspace": self.workspace,
+            "provider": self.provider,
+            "view_count": self.view_count,
+            "report": self.report,
+            "provider": self.provider,
+            "operation": self.operation,
+            "report_type": self.report_type,
+            "consumption_method": self.consumption_method,
         }
         return user_data
 
@@ -60,26 +79,36 @@ class TelemetryCollector:
         user_data = self.collect_data()
         
         # Connect to DuckDB
-        connection = duckdb.connect(self.db_path, read_only=False)
+        connection = duckdb.connect(self.db_path)
 
         # Insert user data into the telemetry table
         connection.execute("""
             CREATE TABLE IF NOT EXISTS user_telemetry (
-                username STRING,
-                email STRING,
+                username VARCHAR,
+                email VARCHAR,
                 timestamp TIMESTAMP,
-                url STRING,
-                page STRING,
-                name STRING,
-                ip_address STRING
+                url VARCHAR,
+                page VARCHAR,
+                workspace VARCHAR,
+                provider VARCHAR,
+                view_count INTEGER,
+                report VARCHAR,
+                operation VARCHAR,
+                report_type VARCHAR,
+                consumption_method VARCHAR
             );
         """)
 
         # Insert data into the table
         connection.execute("""
-            INSERT INTO user_telemetry (username, email, timestamp, url, page, name, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_data["username"], user_data["email"], user_data["timestamp"], user_data["url"], user_data["page"], user_data["name"], user_data["ip_address"]))
+            INSERT INTO user_telemetry (
+                username, email, timestamp, url, page, workspace, provider, view_count, report, operation, report_type, consumption_method
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_data["username"], user_data["email"], user_data["timestamp"], user_data["url"], user_data["page"], user_data["workspace"], user_data["provider"], user_data["view_count"], user_data["report"], user_data["operation"], user_data["report_type"], user_data["consumption_method"])
+        )
+
+        # Optionally display the data for debugging/logging purposes
+        st.write("User Data Collected:", user_data)
         
         # Close the connection
         connection.close()
