@@ -1,7 +1,7 @@
 [project]
 name = "flowbyte"
 
-version = "0.5.0"
+version = "0.5.1"
 
 authors = [
   { name="Kevork Keheian", email="flowbyte@optiret.com" },
