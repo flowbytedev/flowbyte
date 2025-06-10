@@ -109,9 +109,6 @@ class TelemetryCollector:
         """, (user_data["username"], user_data["email"], user_data["timestamp"], user_data["url"], user_data["page"], user_data["workspace"], user_data["provider"], user_data["view_count"], user_data["report"], user_data["operation"], user_data["report_type"], user_data["consumption_method"], user_data["ip_address"])
         )
 
-        # Optionally display the data for debugging/logging purposes
-        st.write("User Data Collected:", user_data)
-        
         # Close the connection
         connection.close()
 
