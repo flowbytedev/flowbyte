@@ -8,7 +8,6 @@ import urllib.parse
 import pandas as pd
 import numpy as np
 from .log import Log
-from .telemetry import Telemetry
 import sys
 import logfire
 import re
@@ -19,7 +18,6 @@ _log = Log("", "")
 
 
 class SQL:
-    telemetry: Telemetry
     host: str
     # optional
     database: str
@@ -33,24 +31,17 @@ class MSSQL (SQL):
     connection_type: str
     connection = None
 
-    def __init__(self, connection_type, host, database, username, password, driver, telemetry=Telemetry()):
+    def __init__(self, connection_type, host, database, username, password, driver, trust_server="yes"):
         self.host = host
         self.database = database
         self.username = username
         self.password = password
         self.driver = driver
+        self.trust_server = trust_server
         self.connection_type = connection_type
         self.connection = None # type: ignore
-        self.telemetry = telemetry
 
-        if self.telemetry.logger == "logfire":
-
-            if self.connection_type == "sqlalchemy":
-                logfire.instrument_sqlalchemy(engine=self.connection)
-        else:
-            _log.message = "Flowbyte uses logfire for telemetry. You can benefit from logfire by setting the logger to 'logfire' in the telemetry section of the configuration file."
-            _log.status = "warning"
-            _log.print_message()
+   
 
 
     @logfire.instrument(msg_template='sql.check_database_exists')
@@ -83,9 +74,9 @@ class MSSQL (SQL):
 
         try:
             if self.connection_type == "pyodbc":
-                self.connection = pyodbc.connect("DRIVER={" + self.driver + "};SERVER=" + self.host + ";DATABASE=" + self.database + ";UID=" + self.username + ";PWD=" + self.password +";CHARSET=UTF8") # type: ignore
+                self.connection = pyodbc.connect("DRIVER={" + self.driver + "};SERVER=" + self.host + ";DATABASE=" + self.database + ";UID=" + self.username + ";PWD=" + self.password + ";TrustServerCertificate=" + self.trust_server + ";CHARSET=UTF8") # type: ignore
             elif self.connection_type == "sqlalchemy":
-                connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
+                connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};TrustServerCertificate={self.trust_server};CHARSET=UTF8")
                 self.connection = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
 
             _log.message = f"Connected Successfully to: \n- Server: {self.host}\n- Database: {self.database}"
@@ -685,7 +676,7 @@ class MSSQL (SQL):
             None
         """
 
-        connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};CHARSET=UTF8")
+        connect_string = urllib.parse.quote_plus(f"DRIVER={self.driver};SERVER={self.host};DATABASE={self.database};UID={self.username};PWD={self.password};TrustServerCertificate={self.trust_server};CHARSET=UTF8")
         engine = sqlalchemy.create_engine(f'mssql+pyodbc:///?odbc_connect={connect_string}', fast_executemany=True) # type: ignore
 
         metadata = MetaData()
