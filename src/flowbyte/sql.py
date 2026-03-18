@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from .log import Log
 import sys
-import logfire
+
 import re
 from sqlalchemy.dialects.mssql import NVARCHAR
 
@@ -44,7 +44,7 @@ class MSSQL (SQL):
    
 
 
-    @logfire.instrument(msg_template='sql.check_database_exists')
+   
     def check_database_exists(self):
         
         # cursor = self.connection.cursor()
@@ -65,7 +65,7 @@ class MSSQL (SQL):
         
         return exists
     
-    @logfire.instrument(msg_template='sql.connect')
+ 
     def connect(self):
 
         """
@@ -92,7 +92,7 @@ class MSSQL (SQL):
             return None
 
     
-    @logfire.instrument(msg_template='sql.disconnect')
+
     def disconnect(self):
         """
         Close the connection to the database
@@ -118,7 +118,7 @@ class MSSQL (SQL):
             _log.status = "fail"
             _log.print_message()
 
-    @logfire.instrument(msg_template='sql.create_database')
+
     def create_database(self, database_name):
         """
         Create a new database
@@ -137,7 +137,7 @@ class MSSQL (SQL):
 
 
 
-    @logfire.instrument(msg_template='sql.schema_exists')
+
     def schema_exists(self, schema_name):
         """
         Check if a schema exists in the database
@@ -159,7 +159,7 @@ class MSSQL (SQL):
             return cursor.fetchone() is not None
             
 
-    @logfire.instrument(msg_template='sql.create_schema')
+   
     def create_schema(self, schema_name):
 
         # Validate schema name to allow only alphanumeric characters, underscores, and optional square brackets
@@ -197,7 +197,7 @@ class MSSQL (SQL):
                 print(f"Schema '{schema_name}' already exists.") 
 
 
-    @logfire.instrument(msg_template='sql.table_exists')
+
     def table_exists(self, schema_name, table_name):
         """
         Check if a table exists in the database
@@ -228,7 +228,7 @@ class MSSQL (SQL):
             return cursor.fetchone() is not None
 
     
-    @logfire.instrument(msg_template='sql.get_data.convert_pyarrow_columns')
+
     def convert_pyarrow_columns(self, chunk_df, category_columns=None, bool_columns=None, float_columns=None, integer_columns = None, object_columns=None, timestamp_columns=None):
         """
         Convert columns in a DataFrame to the specified data types using PyArrow
@@ -302,7 +302,7 @@ class MSSQL (SQL):
         return chunk_df
 
 
-    @logfire.instrument(msg_template='sql.get_data')
+
     def get_data(self, query, chunksize=10000, category_columns=None, bool_columns=None, 
                  float_columns=None, integer_columns=None, 
                  object_columns=None, timestamp_columns=None, 
@@ -451,7 +451,7 @@ class MSSQL (SQL):
             return None
         
 
-    @logfire.instrument(msg_template='sql.get_full_data')
+
     def get_full_data(self, query, category_columns=None, bool_columns=None, 
                  float_columns=None, integer_columns=None,  
                  object_columns=None, timestamp_columns=None, progress_callback=None, *args, **kwargs):
@@ -580,7 +580,7 @@ class MSSQL (SQL):
             return None
 
 
-    @logfire.instrument(msg_template='sql.insert_data')
+
     def insert_data(self, schema: str, table_name: str, insert_records: pd.DataFrame, chunksize=10000, if_table_exists="append", progress_callback=None, *args, **kwargs):
         """
         Insert records into a database table
@@ -660,7 +660,7 @@ class MSSQL (SQL):
  
  
 
-    @logfire.instrument(msg_template='sql.update_data')
+
     def update_data(self, schema_name, table_name, update_records, keys):
         """
         Update records in a database table based on the provided keys.
@@ -722,7 +722,7 @@ class MSSQL (SQL):
                     print(f"{updates_processed} records updated")
 
 
-    @logfire.instrument(msg_template='sql.upsert_data')
+
     def upsert_from_table(self, df, source_schema, target_schema, target_table, source_table, key_columns, delete_not_matched=False):
  
         """
@@ -795,7 +795,7 @@ class MSSQL (SQL):
         return records_updated, query
 
 
-    @logfire.instrument(msg_template='sql.update_from_table')
+
     def update_from_table(self, df, target_table, source_table, key_columns):
 
         """
@@ -839,7 +839,7 @@ class MSSQL (SQL):
         self.connection.commit() # type: ignore
 
 
-    @logfire.instrument(msg_template='sql.truncate_table')
+
     def truncate_table(self, schema_name, table_name):
         """
         Truncate a table in the database
@@ -863,7 +863,7 @@ class MSSQL (SQL):
 
 
     
-    @logfire.instrument(msg_template='sql.delete_data')
+
     def delete_data(self, schema_name, table_name):
         """
         Delete data from a table in the database
@@ -885,7 +885,7 @@ class MSSQL (SQL):
             raise ValueError("Invalid connection type. Use 'pyodbc' or 'sqlalchemy'.")
 
 
-    @logfire.instrument(msg_template='sql.delete_data_with_conditions')
+
     def delete_data_with_conditions(self, schema_name, table_name, conditions):
         """
         Delete data from a table in the database based on the provided conditions
@@ -916,7 +916,6 @@ class MSSQL (SQL):
     
 
     # Function to execute a query based on the connection type sqlalchmey or pyodbc and returns the row count
-    @logfire.instrument(msg_template='sql.execute_query')
     def execute_query(self, query):
         """
         Execute a query and return the row count
